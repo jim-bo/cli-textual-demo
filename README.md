@@ -1,3 +1,12 @@
+---
+title: CLI Textual Demo
+emoji: 🚀
+colorFrom: indigo
+colorTo: blue
+sdk: docker
+pinned: false
+---
+
 # Gemini/Claude CLI TUI Prototype
 
 A Python-based TUI prototype built with [Textual](https://textual.textualize.io/) that mirrors the user experience of modern AI CLI tools.
