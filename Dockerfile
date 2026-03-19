@@ -20,5 +20,5 @@ ENV PYTHONPATH=/app/src
 ENV PYTHONUNBUFFERED=1
 
 # Run textual-serve on the Hugging Face port
-# We use 0.0.0.0 so it's accessible externally
-CMD ["uv", "run", "textual", "serve", "--host", "0.0.0.0", "--port", "7860", "src/cli_textual/app.py"]
+# We use -c to run the application as a module via python -m
+CMD ["uv", "run", "textual", "serve", "--host", "0.0.0.0", "--port", "7860", "-c", "python -m cli_textual.app"]
