@@ -4,12 +4,15 @@ from typing import AsyncGenerator, List, Any
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.messages import ModelMessage
 
 from cli_textual.core.chat_events import (
-    ChatEvent, AgentThinking, AgentToolStart, AgentToolEnd, AgentStreamChunk, AgentComplete
+    ChatEvent, AgentThinking, AgentToolStart, AgentToolEnd, AgentStreamChunk, AgentComplete,
+    AgentRequiresUserInput, ChatDeps
 )
-from cli_textual.agents.specialists import model, study_resolver, parameter_validator, link_generator
-from cli_textual.core.agent_schemas import StudyResolution, ValidationResult, GeneratedLink
+from cli_textual.agents.specialists import model, intent_resolver, data_validator, result_generator
+from cli_textual.core.agent_schemas import IntentResolution, ValidationResult, StructuredResult
+from cli_textual.agents.prompt_loader import PROMPTS
 
 from openai import AsyncOpenAI
 
@@ -21,40 +24,40 @@ manager_model = TestModel()
 # Procedural Orchestration
 # Explicit step-by-step logic in Python
 # ---------------------------------------------------------------------------
-async def run_procedural_pipeline(prompt: str) -> AsyncGenerator[ChatEvent, None]:
+async def run_procedural_pipeline(prompt: str, message_history: List[Any] = None) -> AsyncGenerator[ChatEvent, None]:
     """Execute the pipeline step-by-step using Python flow control."""
     
-    # 1. Resolve Study
-    yield AgentThinking(message="Resolving study semantic search...")
-    await asyncio.sleep(0.5) # Minimum UI feedback delay
+    # 1. Resolve Intent
+    yield AgentThinking(message="Resolving primary intent...")
+    await asyncio.sleep(0.5) 
     
-    # Step 1: Call Study Resolver
-    yield AgentToolStart(tool_name="study_resolver", args={"query": prompt})
-    res = await study_resolver.run(prompt)
-    study: StudyResolution = res.output
-    yield AgentToolEnd(tool_name="study_resolver", result=f"Resolved to {study.study_id}")
+    # Step 1: Call Intent Resolver
+    yield AgentToolStart(tool_name="intent_resolver", args={"query": prompt})
+    res = await intent_resolver.run(prompt, message_history=message_history)
+    intent: IntentResolution = res.output
+    yield AgentToolEnd(tool_name="intent_resolver", result=f"Resolved to {intent.target_id}")
     
     # Check for clarification
-    if study.clarification_needed:
-        yield AgentStreamChunk(text=f"**Study Resolution Clarification Required:**\n\n{study.clarification_needed}")
-        yield AgentComplete()
+    if intent.clarification_needed:
+        yield AgentStreamChunk(text=f"**Clarification Required:**\n\n{intent.clarification_needed}")
+        yield AgentComplete(new_history=res.new_messages())
         return
 
-    # 2. Validate Parameters
-    yield AgentThinking(message=f"Validating attributes for {study.study_id}...")
-    yield AgentToolStart(tool_name="parameter_validator", args={"study_id": study.study_id})
-    val_res = await parameter_validator.run(f"Validating for {prompt} in {study.study_id}")
+    # 2. Validate Details
+    yield AgentThinking(message=f"Validating details for {intent.target_id}...")
+    yield AgentToolStart(tool_name="data_validator", args={"target_id": intent.target_id})
+    val_res = await data_validator.run(f"Validating for {prompt} in {intent.target_id}", message_history=res.all_messages())
     validation: ValidationResult = val_res.output
-    yield AgentToolEnd(tool_name="parameter_validator", result="Validation complete")
+    yield AgentToolEnd(tool_name="data_validator", result="Validation complete")
 
-    # 3. Generate Link
-    yield AgentThinking(message="Constructing final cBioPortal link...")
-    yield AgentToolStart(tool_name="link_generator", args={"study_id": study.study_id, "attrs": validation.available_attributes})
-    link_res = await link_generator.run(f"Generate link for {study.study_id} with {validation.available_attributes}")
-    link: GeneratedLink = link_res.output
+    # 3. Generate Result
+    yield AgentThinking(message="Constructing final structured result...")
+    yield AgentToolStart(tool_name="result_generator", args={"target_id": intent.target_id, "details": validation.available_attributes})
+    result_res = await result_generator.run(f"Generate result for {intent.target_id} with {validation.available_attributes}", message_history=val_res.all_messages())
+    result: StructuredResult = result_res.output
     
-    yield AgentStreamChunk(text=f"### Result Found!\n\n{link.explanation}\n\n**Link:** [{link.url}]({link.url})")
-    yield AgentComplete()
+    yield AgentStreamChunk(text=f"### Result Found!\n\n{result.explanation}\n\n**Output:** {result.output_data}")
+    yield AgentComplete(new_history=result_res.new_messages())
 
 # ---------------------------------------------------------------------------
 # Manager Orchestration
@@ -62,56 +65,78 @@ async def run_procedural_pipeline(prompt: str) -> AsyncGenerator[ChatEvent, None
 # ---------------------------------------------------------------------------
 manager_agent = Agent(
     model,
-    system_prompt=(
-        "You are a master cBioPortal orchestrator. To answer a user question, "
-        "you MUST follow this flow: 1. Resolve the study, 2. Validate params, 3. Generate link. "
-        "Do not answer directly; always use your specialized sub-agent tools. "
-        "If a tool asks for clarification, relay that to the user."
-    )
+    deps_type=ChatDeps,
+    system_prompt=PROMPTS['orchestrators']['manager']['system_prompt']
 )
 
 @manager_agent.tool
-async def call_study_resolver(ctx: RunContext[None], query: str) -> str:
-    """Resolve a user's natural language query to a specific cBioPortal study ID."""
-    res = await study_resolver.run(query)
-    data: StudyResolution = res.output
-    if data.clarification_needed:
-        return f"CLARIFICATION REQUIRED: {data.clarification_needed}"
-    return f"RESOLVED: {data.study_id} ({data.study_name}) - Confidence: {data.confidence}"
+async def ask_user_to_select_manager(ctx: RunContext[ChatDeps], prompt: str, options: List[str]) -> str:
+    """Ask the user to select from a list of options. Use this when you need the user to make a choice."""
+    await ctx.deps.event_queue.put(AgentRequiresUserInput(tool_name="/select", prompt=prompt, options=options))
+    response = await ctx.deps.input_queue.get()
+    return response
 
 @manager_agent.tool
-async def call_parameter_validator(ctx: RunContext[None], study_id: str, question: str) -> str:
-    """Validate if the study contains the attributes required by the user's question."""
-    res = await parameter_validator.run(f"Check {study_id} for {question}")
+async def call_intent_resolver(ctx: RunContext[ChatDeps], query: str) -> str:
+    """Resolve a user's natural language query to a specific target identifier."""
+    res = await intent_resolver.run(query)
+    data: IntentResolution = res.output
+    if data.clarification_needed:
+        return f"CLARIFICATION REQUIRED: {data.clarification_needed}"
+    return f"RESOLVED: {data.target_id} ({data.target_name}) - Confidence: {data.confidence}"
+
+@manager_agent.tool
+async def call_data_validator(ctx: RunContext[ChatDeps], target_id: str, question: str) -> str:
+    """Validate if the target contains the details required by the user's question."""
+    res = await data_validator.run(f"Check {target_id} for {question}")
     data: ValidationResult = res.output
     if data.clarification_needed:
         return f"CLARIFICATION REQUIRED: {data.clarification_needed}"
     status = "VALID" if data.is_valid else "PARTIAL"
-    return f"STATUS: {status} - Attributes: {data.available_attributes}"
+    return f"STATUS: {status} - Details: {data.available_attributes}"
 
 @manager_agent.tool
-async def call_link_generator(ctx: RunContext[None], study_id: str, attributes: List[str], question: str) -> str:
-    """Generate the final cBioPortal deep-link URL."""
-    res = await link_generator.run(f"Generate link for {study_id} with {attributes} for {question}")
-    data: GeneratedLink = res.output
-    return f"RESULT: {data.explanation} - Link: {data.url}"
+async def call_result_generator(ctx: RunContext[ChatDeps], target_id: str, details: List[str], question: str) -> str:
+    """Generate the final structured result."""
+    res = await result_generator.run(f"Generate result for {target_id} with {details} for {question}")
+    data: StructuredResult = res.output
+    return f"RESULT: {data.explanation} - Data: {data.output_data}"
 
 # ---------------------------------------------------------------------------
 # Manager Pipeline Wrapper
 # ---------------------------------------------------------------------------
-async def run_manager_pipeline(prompt: str) -> AsyncGenerator[ChatEvent, None]:
-    """Execute the manager orchestration and yield UI-compatible ChatEvents."""
+async def run_manager_pipeline(
+    prompt: str, 
+    input_queue: asyncio.Queue, 
+    message_history: List[Any] = None
+) -> AsyncGenerator[ChatEvent, None]:
+    """Execute the manager orchestration using queues for UI bridging."""
+    event_queue = asyncio.Queue()
+    deps = ChatDeps(event_queue=event_queue, input_queue=input_queue)
     
-    yield AgentThinking(message="Manager orchestrator initializing...")
+    await event_queue.put(AgentThinking(message="Manager orchestrator initializing..."))
     
-    # We use run_stream to get tool call and chunk events
-    async with manager_agent.run_stream(prompt) as result:
-        last_length = 0
-        async for message in result.stream_text():
-            # stream_text() yields the full message so far, we only want the new part
-            new_part = message[last_length:]
-            if new_part:
-                yield AgentStreamChunk(text=new_part)
-                last_length = len(message)
-            
-    yield AgentComplete()
+    async def run_agent():
+        try:
+            async with manager_agent.run_stream(prompt, deps=deps, message_history=message_history) as result:
+                last_length = 0
+                async for text in result.stream_text():
+                    new_part = text[last_length:]
+                    if new_part:
+                        await event_queue.put(AgentStreamChunk(text=new_part))
+                        last_length = len(text)
+                
+                await event_queue.put(AgentComplete(new_history=result.new_messages()))
+        except Exception as e:
+            await event_queue.put(AgentComplete())
+            raise e
+
+    # Run the agent in the background
+    task = asyncio.create_task(run_agent())
+    
+    # Yield events to the TUI as they come in
+    while True:
+        event = await event_queue.get()
+        yield event
+        if isinstance(event, AgentComplete):
+            break

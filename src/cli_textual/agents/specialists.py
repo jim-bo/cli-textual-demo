@@ -7,7 +7,8 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.gemini import GeminiModel
 from pydantic_ai.models.test import TestModel
 
-from cli_textual.core.agent_schemas import StudyResolution, ValidationResult, GeneratedLink
+from cli_textual.core.agent_schemas import IntentResolution, ValidationResult, StructuredResult
+from cli_textual.agents.prompt_loader import PROMPTS
 
 load_dotenv()
 
@@ -24,7 +25,7 @@ def get_model():
     if ":" in model_name:
         provider, name = model_name.split(":", 1)
 
-    # 1. Handle OpenRouter (Special case of OpenAI compatibility)
+    # 1. Handle OpenRouter
     openrouter_key = os.getenv("OPENROUTER_API_KEY")
     if openrouter_key and (provider == "openai" or "anthropic/" in name or "google/" in name):
         return OpenAIChatModel(
@@ -50,58 +51,44 @@ def get_model():
 model = get_model()
 
 # ---------------------------------------------------------------------------
-# Specialist 1: Study Resolver
+# Specialist 1: Intent Resolver
 # ---------------------------------------------------------------------------
-study_resolver = Agent(
+intent_resolver = Agent(
     model,
-    output_type=StudyResolution,
-    system_prompt=(
-        "You resolve user queries to specific cBioPortal cancer studies. "
-        "If the user is vague (e.g., 'breast cancer'), set confidence low (0.5) "
-        "and provide a clarification question like 'I found several breast cancer studies, "
-        "did you mean METABRIC or TCGA?'"
-    )
+    output_type=IntentResolution,
+    system_prompt=PROMPTS['specialists']['intent_resolver']['system_prompt']
 )
 
-@study_resolver.tool
-async def search_studies(ctx: RunContext[None], query: str) -> str:
-    """Mock search for studies in cBioPortal."""
-    return "brca_tcga (TCGA Breast Cancer), brca_metabric (METABRIC Breast Cancer), lual_2014 (Lung Cancer)"
+@intent_resolver.tool
+async def mock_resolve_intent(ctx: RunContext[None], query: str) -> str:
+    """Mock search for intent identifiers."""
+    return "Found matching target: demo_subject_001"
 
 # ---------------------------------------------------------------------------
-# Specialist 2: Parameter Validator
+# Specialist 2: Data Validator
 # ---------------------------------------------------------------------------
-parameter_validator = Agent(
+data_validator = Agent(
     model,
     output_type=ValidationResult,
-    system_prompt=(
-        "You validate whether a cancer study contains specific genomic or clinical data. "
-        "If a key attribute like 'Overall Survival' is missing, set is_valid=False "
-        "and ask if the user wants to proceed anyway."
-    )
+    system_prompt=PROMPTS['specialists']['data_validator']['system_prompt']
 )
 
-@parameter_validator.tool
-async def get_study_attributes(ctx: RunContext[None], study_id: str) -> list[str]:
-    """Mock fetching attributes for a study."""
-    if "brca" in study_id:
-        return ["MUTATIONS", "CNA", "OS_STATUS", "TMB"]
-    return ["MUTATIONS"]
+@data_validator.tool
+async def mock_check_data_availability(ctx: RunContext[None], target_id: str) -> str:
+    """Mock validation of details for a given target identifier."""
+    return f"Details confirmed for {target_id}: [detail_a, detail_b]"
 
 # ---------------------------------------------------------------------------
-# Specialist 3: Link Generator
+# Specialist 3: Result Generator
 # ---------------------------------------------------------------------------
-link_generator = Agent(
+result_generator = Agent(
     model,
-    output_type=GeneratedLink,
-    system_prompt=(
-        "Construct deep-links for cBioPortal based on the study_id and attributes. "
-        "Ensure the explanation is helpful and concise."
-    )
+    output_type=StructuredResult,
+    system_prompt=PROMPTS['specialists']['result_generator']['system_prompt']
 )
 
-@link_generator.tool
-async def build_url(ctx: RunContext[None], study_id: str, attributes: list[str]) -> str:
-    """Deterministic URL builder for cBioPortal."""
-    attrs = ",".join(attributes)
-    return f"https://www.cbioportal.org/results/mutations?cancer_study_list={study_id}&attr_list={attrs}"
+@result_generator.tool_plain
+async def build_mock_structured_result(target_id: str, details: list[str]) -> str:
+    """Deterministic result builder."""
+    detail_str = ",".join(details)
+    return f"https://example.com/results?id={target_id}&details={detail_str}"

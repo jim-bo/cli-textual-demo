@@ -20,7 +20,8 @@ from cli_textual.core.permissions import PermissionManager
 from cli_textual.core.command import CommandManager
 from cli_textual.core.dummy_agent import DummyAgent
 from cli_textual.core.chat_events import (
-    ChatEvent, AgentThinking, AgentToolStart, AgentToolEnd, AgentStreamChunk, AgentComplete
+    ChatEvent, AgentThinking, AgentToolStart, AgentToolEnd, AgentStreamChunk, AgentComplete,
+    AgentRequiresUserInput
 )
 
 # Pydantic AI Orchestrators
@@ -61,6 +62,7 @@ class ChatApp(App):
         self.survey_answers = {}
         # Allow setting default mode via environment variable
         self.chat_mode = os.getenv("CHAT_MODE", "dummy") 
+        self.message_history = [] # For LLM context memory
         
         # Initialize Core Managers
         self.workspace_root = Path.cwd().resolve()
@@ -102,6 +104,41 @@ class ChatApp(App):
         history.mount(LandingPage())
 
 
+    @on(OptionList.OptionSelected, "#mode-select-list")
+    def handle_mode_selection(self, event: OptionList.OptionSelected) -> None:
+        """Handle user selecting a mode from the /mode command list."""
+        selection = str(event.option.prompt)
+        self.chat_mode = selection
+        
+        # Clear UI
+        interaction = self.query_one("#interaction-container")
+        interaction.remove_class("visible")
+        interaction.query("*").remove()
+        
+        # Feedback
+        self.add_to_history(f"Chat mode set to: **{self.chat_mode}**")
+        self.query_one(".mode-info").update(f"mode: {self.chat_mode}")
+        self.query_one("#main-input").focus()
+
+    @on(OptionList.OptionSelected, "#agent-select-tool")
+    def handle_agent_selection(self, event: OptionList.OptionSelected) -> None:
+        """Handle user making a choice requested by an agent tool."""
+        selection = str(event.option.prompt)
+        # Clear the interaction area
+        interaction = self.query_one("#interaction-container")
+        interaction.remove_class("visible")
+        interaction.query("*").remove()
+        
+        # Log choice to history
+        self.add_to_history(f"Selected: **{selection}**", is_user=True)
+        
+        # Resume the agent by pushing the selection into the queue
+        if hasattr(self, "interactive_input_queue"):
+            self.interactive_input_queue.put_nowait(selection)
+        
+        # Refocus main input
+        self.query_one("#main-input").focus()
+
     @on(GrowingTextArea.Changed)
     def handle_changes(self, event: GrowingTextArea.Changed) -> None:
         event.text_area.styles.height = min(max(1, event.text_area.document.line_count), 10)
@@ -131,10 +168,12 @@ class ChatApp(App):
             await self.process_command(user_input)
         else:
             # Select orchestrator based on chat_mode
+            self.interactive_input_queue = asyncio.Queue()
+            
             if self.chat_mode == "procedural":
-                generator = run_procedural_pipeline(user_input)
+                generator = run_procedural_pipeline(user_input, message_history=self.message_history)
             elif self.chat_mode == "manager":
-                generator = run_manager_pipeline(user_input)
+                generator = run_manager_pipeline(user_input, self.interactive_input_queue, message_history=self.message_history)
             else:
                 generator = self.agent.ask(user_input)
                 
@@ -165,6 +204,21 @@ class ChatApp(App):
             if isinstance(event, AgentThinking):
                 task_label.update(event.message)
             
+            elif isinstance(event, AgentRequiresUserInput):
+                # Pause and show the interaction UI
+                interaction = self.query_one("#interaction-container")
+                interaction.add_class("visible")
+                interaction.query("*").remove()
+                
+                interaction.mount(Label(event.prompt))
+                
+                if event.tool_name == "/select":
+                    options = OptionList(*event.options, id="agent-select-tool")
+                    interaction.mount(options)
+                    self.call_after_refresh(options.focus)
+                
+                history.scroll_end(animate=False)
+
             elif isinstance(event, AgentToolStart):
                 task_label.update(f"Running tool: [bold cyan]{event.tool_name}[/]")
             
@@ -180,6 +234,10 @@ class ChatApp(App):
                 history.scroll_end(animate=False)
             
             elif isinstance(event, AgentComplete):
+                # Save new history for context memory
+                if event.new_history:
+                    self.message_history.extend(event.new_history)
+                
                 # If we never got a stream (e.g. only tool calls), remove progress
                 if "agent-progress" in [c.id for c in history.children]:
                     progress.remove()

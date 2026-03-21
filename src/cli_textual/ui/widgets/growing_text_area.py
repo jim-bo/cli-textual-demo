@@ -9,7 +9,16 @@ class GrowingTextArea(TextArea):
             self.text = text
             super().__init__()
 
+    def _on_paste(self, event: events.Paste) -> None:
+        """Handle paste events to ensure height updates."""
+        # The base TextArea handles the actual insertion
+        # We just need to trigger the logic that updates height
+        self.post_message(self.Changed(self))
+
     def _on_key(self, event: events.Key) -> None:
+        if not event.key:
+            return
+            
         try:
             autocomplete = self.app.query_one("#autocomplete-list", OptionList)
             is_autocomplete_visible = autocomplete.has_class("visible")
