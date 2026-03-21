@@ -7,3 +7,5 @@ class ClearCommand(SlashCommand):
 
     async def execute(self, app, args: List[str]):
         app.query_one("#history-container").query("*").remove()
+        app.message_history = []
+        app.notify("Chat memory cleared.")
