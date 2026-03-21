@@ -4,7 +4,7 @@ reviews:
   profile: "chill" # Options: "chill", "assertive"
   auto_review:
     enabled: true
-    draft: false
+    drafts: false
   tools:
     shellcheck:
       enabled: true
