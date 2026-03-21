@@ -1,0 +1,226 @@
+Screen {
+    background: #121212;
+    layout: vertical;
+}
+
+Header {
+    dock: top;
+}
+
+Footer {
+    dock: bottom;
+}
+
+#history-container {
+    height: 1fr;
+    padding: 0 1;
+    overflow-y: scroll;
+}
+
+/* Landing Page Styles */
+LandingPage {
+    margin: 1 2;
+    height: auto;
+    min-height: 0;
+}
+
+#landing-container {
+    border: panel #00AAFF;
+    padding: 0 1;
+    height: auto;
+    background: #1A1A1A;
+    min-height: 0;
+}
+
+#landing-title {
+    width: 100%;
+    text-align: center;
+    color: #00AAFF;
+    text-style: bold;
+    height: 1;
+}
+
+#landing-content {
+    height: auto;
+}
+
+#landing-left {
+    width: 40%;
+    border-right: solid #333333;
+    padding-right: 1;
+    height: auto;
+}
+
+#landing-right {
+    width: 60%;
+    padding-left: 1;
+    height: auto;
+}
+
+#landing-graphic {
+    height: 2;
+    width: 10;
+    background: #2A2A2A;
+    margin: 0;
+}
+
+#landing-subtitle {
+    color: #00AAFF;
+    text-style: bold;
+    height: 1;
+    margin: 0;
+}
+
+.landing-info {
+    color: #888888;
+    height: 1;
+}
+
+.landing-header {
+    color: #00AAFF;
+    text-style: bold;
+    height: 1;
+    margin: 0;
+}
+
+.landing-item {
+    color: #CCCCCC;
+    margin-left: 2;
+    height: 1;
+}
+
+#interaction-container {
+    display: none;
+    border-top: tall #333333;
+    background: #1A1A1A;
+}
+
+#interaction-container.visible {
+    display: block;
+    padding: 0 1;
+    min-height: 5;
+}
+
+#bottom-dock {
+    height: auto;
+    background: #121212;
+    border-top: solid #333333;
+}
+
+#input-container {
+    height: auto;
+    min-height: 3;
+    background: #2A2A2A;
+    margin: 0 1;
+    align: left top;
+}
+
+#prompt {
+    color: #D4AF37;
+    margin-left: 1;
+    margin-top: 1;
+    text-style: bold;
+}
+
+GrowingTextArea {
+    border: none;
+    background: #2A2A2A;
+    width: 1fr;
+    height: auto;
+    min-height: 1;
+    margin-top: 1;
+}
+
+GrowingTextArea:focus {
+    border: none;
+}
+
+#status-bar {
+    height: 1;
+}
+
+.status-info {
+    color: #888888;
+    margin-left: 1;
+}
+
+.path-info {
+    color: #FFFFFF;
+    margin-left: 1;
+    height: 1;
+}
+
+#autocomplete-list {
+    background: #1E1E1E;
+    color: #CCCCCC;
+    border: none;
+    height: auto;
+    max-height: 8;
+    display: none;
+    margin: 0 1;
+}
+
+#autocomplete-list.visible {
+    display: block;
+}
+
+.user-msg {
+    color: #00FF00;
+    margin-top: 1;
+    text-style: bold;
+}
+
+.ai-msg {
+    color: #CCCCCC;
+    margin-bottom: 1;
+    border-left: solid #333333;
+    padding-left: 1;
+}
+
+DNASpinner {
+    width: 5;
+    height: 1;
+    color: #00AAFF;
+    text-style: bold;
+}
+
+#task-label {
+    margin-left: 2;
+}
+
+TabbedContent {
+    height: auto;
+    max-height: 8;
+    margin: 0;
+}
+
+TabbedContent #--content-tabs {
+    height: 1;
+    min-height: 1;
+}
+
+TabPane {
+    padding: 0;
+    margin: 0;
+}
+
+OptionList {
+    height: auto;
+    max-height: 6;
+    border: round #00AAFF;
+}
+
+DirectoryTree {
+    height: 20;
+    background: #1A1A1A;
+    border: round #333333;
+    overflow-y: auto;
+}
+
+.file-viewer {
+    height: 20;
+    background: #000000;
+    padding: 1;
+    overflow-y: scroll;
+    border: solid #333333;
+}
