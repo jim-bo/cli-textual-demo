@@ -1,0 +1,14 @@
+# CodeRabbit Configuration
+language: "en-US"
+reviews:
+  profile: "chill" # Options: "chill", "assertive"
+  auto_review:
+    enabled: true
+    draft: false
+  tools:
+    shellcheck:
+      enabled: true
+    ruff:
+      enabled: true
+chat:
+  auto_reply: true
