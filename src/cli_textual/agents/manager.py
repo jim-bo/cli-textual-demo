@@ -1,4 +1,5 @@
 import asyncio
+import os
 from typing import AsyncGenerator, List, Any
 from pydantic_ai import Agent, RunContext
 
@@ -16,14 +17,32 @@ from cli_textual.tools.web_fetch import web_fetch as pure_web_fetch
 from cli_textual.agents.prompt_loader import PROMPTS
 
 # ---------------------------------------------------------------------------
+# Safe Mode
+# ---------------------------------------------------------------------------
+SAFE_MODE = os.getenv("SAFE_MODE", "").lower() in ("1", "true", "yes")
+
+
+def _get_system_prompt() -> str:
+    base = PROMPTS['orchestrators']['manager']['system_prompt']
+    if SAFE_MODE:
+        base += "\n\n" + PROMPTS['orchestrators']['manager']['safety_preamble']
+    return base
+
+
+# ---------------------------------------------------------------------------
 # Manager Orchestration
 # A router agent that delegates to sub-agents as tools
 # ---------------------------------------------------------------------------
 manager_agent = Agent(
     model,
     deps_type=ChatDeps,
-    system_prompt=PROMPTS['orchestrators']['manager']['system_prompt']
+    system_prompt=_get_system_prompt(),
 )
+
+
+# ---------------------------------------------------------------------------
+# Tool wrappers (module-level for testability)
+# ---------------------------------------------------------------------------
 
 @manager_agent.tool
 async def ask_user_to_select(ctx: RunContext[ChatDeps], prompt: str, options: List[str]) -> str:
@@ -48,6 +67,7 @@ async def ask_user_to_select(ctx: RunContext[ChatDeps], prompt: str, options: Li
     response = await ctx.deps.input_queue.get()
     return response
 
+
 @manager_agent.tool
 async def execute_slash_command(ctx: RunContext[ChatDeps], command_name: str, args: List[str] | None = None) -> str:
     """Execute a TUI slash command (e.g. '/clear', '/ls').
@@ -55,30 +75,10 @@ async def execute_slash_command(ctx: RunContext[ChatDeps], command_name: str, ar
     """
     if args is None:
         args = []
-    # Ensure command name starts with /
     if not command_name.startswith("/"):
         command_name = f"/{command_name}"
     await ctx.deps.event_queue.put(AgentExecuteCommand(command_name=command_name, args=args))
     return f"Command {command_name} triggered in UI."
-
-@manager_agent.tool
-async def bash_exec(ctx: RunContext[ChatDeps], command: str, working_dir: str = ".") -> str:
-    """Execute a shell command and stream its output to the UI in real time.
-
-    Use this to run scripts, inspect the system, process files, or perform any
-    shell operation. stdout and stderr are merged and streamed as they arrive.
-    Output is capped at 8 KB; a truncation note is appended when exceeded.
-
-    Args:
-        command: The shell command to run (passed to /bin/sh)
-        working_dir: Working directory for the command (default: current directory)
-    """
-    await ctx.deps.event_queue.put(AgentToolStart(tool_name="bash_exec", args={"command": command}))
-    result = await pure_bash_exec(command, working_dir)
-    await ctx.deps.event_queue.put(AgentToolOutput(tool_name="bash_exec", content=result.output, is_error=result.is_error))
-    status = "error" if result.is_error else f"exit {result.exit_code}"
-    await ctx.deps.event_queue.put(AgentToolEnd(tool_name="bash_exec", result=status))
-    return result.output
 
 
 @manager_agent.tool
@@ -116,20 +116,44 @@ async def web_fetch(ctx: RunContext[ChatDeps], url: str) -> str:
     return result.output
 
 
+async def bash_exec(ctx: RunContext[ChatDeps], command: str, working_dir: str = ".") -> str:
+    """Execute a shell command and stream its output to the UI in real time.
+
+    Use this to run scripts, inspect the system, process files, or perform any
+    shell operation. stdout and stderr are merged and streamed as they arrive.
+    Output is capped at 8 KB; a truncation note is appended when exceeded.
+
+    Args:
+        command: The shell command to run (passed to /bin/sh)
+        working_dir: Working directory for the command (default: current directory)
+    """
+    await ctx.deps.event_queue.put(AgentToolStart(tool_name="bash_exec", args={"command": command}))
+    result = await pure_bash_exec(command, working_dir)
+    await ctx.deps.event_queue.put(AgentToolOutput(tool_name="bash_exec", content=result.output, is_error=result.is_error))
+    status = "error" if result.is_error else f"exit {result.exit_code}"
+    await ctx.deps.event_queue.put(AgentToolEnd(tool_name="bash_exec", result=status))
+    return result.output
+
+
+# Register bash_exec only when not in safe mode
+if not SAFE_MODE:
+    manager_agent.tool(bash_exec)
+
+
 # ---------------------------------------------------------------------------
 # Manager Pipeline Wrapper
 # ---------------------------------------------------------------------------
 async def run_manager_pipeline(
-    prompt: str, 
-    input_queue: asyncio.Queue, 
+    prompt: str,
+    input_queue: asyncio.Queue,
     message_history: List[Any] | None = None
 ) -> AsyncGenerator[ChatEvent, None]:
     """Execute the manager orchestration using queues for UI bridging."""
     event_queue = asyncio.Queue()
     deps = ChatDeps(event_queue=event_queue, input_queue=input_queue)
-    
+
     await event_queue.put(AgentThinking(message="Manager orchestrator initializing..."))
-    
+
     async def run_agent():
         try:
             async with manager_agent.run_stream(prompt, deps=deps, message_history=message_history) as result:
@@ -177,7 +201,7 @@ async def run_manager_pipeline(
 
     # Run the agent in the background
     task = asyncio.create_task(run_agent())
-    
+
     # Yield events to the TUI as they come in
     while True:
         event = await event_queue.get()

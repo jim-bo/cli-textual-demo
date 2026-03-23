@@ -18,6 +18,7 @@ EXPOSE 7860
 # Set environment variables
 ENV PYTHONPATH=/app/src
 ENV PYTHONUNBUFFERED=1
+ENV SAFE_MODE=1
 
 # Run textual-serve via python -m to ensure it is found within the uv environment
 CMD ["uv", "run", "textual", "serve", "--host", "0.0.0.0", "--port", "7860", "PYTHONPATH=/app/src uv run python -m cli_textual.app"]

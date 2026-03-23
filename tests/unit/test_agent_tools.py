@@ -99,59 +99,50 @@ async def test_bash_exec_invalid_command_does_not_raise():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_read_file_returns_contents():
+async def test_read_file_returns_contents(tmp_path):
     ctx, _ = make_ctx()
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-        f.write("line one\nline two\nline three\n")
-        tmp_path = f.name
-    try:
-        result = await read_file(ctx, path=tmp_path)
-        assert "line one" in result
-        assert "line two" in result
-        assert "line three" in result
-    finally:
-        os.unlink(tmp_path)
+    f = tmp_path / "test.txt"
+    f.write_text("line one\nline two\nline three\n")
+    with patch("cli_textual.tools.read_file.Path.cwd", return_value=tmp_path):
+        result = await read_file(ctx, path=str(f))
+    assert "line one" in result
+    assert "line two" in result
+    assert "line three" in result
 
 
 @pytest.mark.asyncio
-async def test_read_file_line_range():
+async def test_read_file_line_range(tmp_path):
     ctx, _ = make_ctx()
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-        f.write("alpha\nbeta\ngamma\ndelta\n")
-        tmp_path = f.name
-    try:
-        result = await read_file(ctx, path=tmp_path, start_line=2, end_line=3)
-        assert "beta" in result
-        assert "gamma" in result
-        assert "alpha" not in result
-        assert "delta" not in result
-    finally:
-        os.unlink(tmp_path)
+    f = tmp_path / "test.txt"
+    f.write_text("alpha\nbeta\ngamma\ndelta\n")
+    with patch("cli_textual.tools.read_file.Path.cwd", return_value=tmp_path):
+        result = await read_file(ctx, path=str(f), start_line=2, end_line=3)
+    assert "beta" in result
+    assert "gamma" in result
+    assert "alpha" not in result
+    assert "delta" not in result
 
 
 @pytest.mark.asyncio
-async def test_read_file_emits_lifecycle_events():
+async def test_read_file_emits_lifecycle_events(tmp_path):
     ctx, event_queue = make_ctx()
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-        f.write("content")
-        tmp_path = f.name
-    try:
-        await read_file(ctx, path=tmp_path)
-        events = await drain(event_queue)
-        types = [type(e) for e in events]
-        assert AgentToolStart in types
-        assert AgentToolOutput in types
-        assert AgentToolEnd in types
-    finally:
-        os.unlink(tmp_path)
+    f = tmp_path / "content.txt"
+    f.write_text("content")
+    with patch("cli_textual.tools.read_file.Path.cwd", return_value=tmp_path):
+        await read_file(ctx, path=str(f))
+    events = await drain(event_queue)
+    types = [type(e) for e in events]
+    assert AgentToolStart in types
+    assert AgentToolOutput in types
+    assert AgentToolEnd in types
 
 
 @pytest.mark.asyncio
-async def test_read_file_missing_returns_error_string():
+async def test_read_file_missing_returns_error_string(tmp_path):
     ctx, event_queue = make_ctx()
-    result = await read_file(ctx, path="/nonexistent/path/file_xyz.txt")
+    with patch("cli_textual.tools.read_file.Path.cwd", return_value=tmp_path):
+        result = await read_file(ctx, path=str(tmp_path / "nonexistent.txt"))
     assert "error" in result.lower() or "Error" in result
-    # Must also emit an error output event
     events = await drain(event_queue)
     error_events = [e for e in events if isinstance(e, AgentToolOutput) and e.is_error]
     assert error_events
@@ -174,7 +165,11 @@ async def test_web_fetch_returns_body():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("cli_textual.tools.web_fetch.httpx.AsyncClient", return_value=mock_client):
+    _mock_public_dns = patch("cli_textual.tools.web_fetch.socket.getaddrinfo",
+                              return_value=[(None, None, None, None, ("93.184.216.34", 0))])
+
+    with _mock_public_dns, \
+         patch("cli_textual.tools.web_fetch.httpx.AsyncClient", return_value=mock_client):
         result = await web_fetch(ctx, url="https://example.com/api")
 
     assert "200" in result
@@ -194,7 +189,11 @@ async def test_web_fetch_emits_lifecycle_events():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("cli_textual.tools.web_fetch.httpx.AsyncClient", return_value=mock_client):
+    _mock_public_dns = patch("cli_textual.tools.web_fetch.socket.getaddrinfo",
+                              return_value=[(None, None, None, None, ("93.184.216.34", 0))])
+
+    with _mock_public_dns, \
+         patch("cli_textual.tools.web_fetch.httpx.AsyncClient", return_value=mock_client):
         await web_fetch(ctx, url="https://example.com")
 
     events = await drain(event_queue)
@@ -213,7 +212,11 @@ async def test_web_fetch_network_error_returns_error_string():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("cli_textual.tools.web_fetch.httpx.AsyncClient", return_value=mock_client):
+    _mock_public_dns = patch("cli_textual.tools.web_fetch.socket.getaddrinfo",
+                              return_value=[(None, None, None, None, ("93.184.216.34", 0))])
+
+    with _mock_public_dns, \
+         patch("cli_textual.tools.web_fetch.httpx.AsyncClient", return_value=mock_client):
         result = await web_fetch(ctx, url="https://unreachable.example")
 
     assert "error" in result.lower() or "Error" in result
