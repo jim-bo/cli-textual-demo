@@ -72,7 +72,7 @@ LandingPage {
 
 .landing-info {
     color: #888888;
-    height: 1;
+    height: auto;
 }
 
 .landing-header {
