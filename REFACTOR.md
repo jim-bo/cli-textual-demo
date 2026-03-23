@@ -14,7 +14,7 @@ Reorganize the codebase so each concept is self-evident to a reader:
 | Phase | Description | Status |
 |-------|------------|--------|
 | 1 | Extract pure tools into `tools/` module | **done** |
-| 2 | Remove specialists, procedural pipeline, dummy agent; extract model config | pending |
+| 2 | Remove specialists, procedural pipeline, dummy agent; extract model config | **done** |
 | 3 | Rename orchestrators → manager, add architecture boundary tests | pending |
 
 ## Phase Details

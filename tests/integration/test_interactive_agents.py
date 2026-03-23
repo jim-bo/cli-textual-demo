@@ -38,7 +38,7 @@ async def test_manager_integration_backend():
     """Test the manager pipeline using the real configured LLM."""
     input_queue = asyncio.Queue()
     
-    from cli_textual.agents.specialists import get_model
+    from cli_textual.agents.model import get_model
     real_model = get_model() # Picks up PYDANTIC_AI_MODEL from env
     
     if isinstance(real_model, TestModel):
@@ -70,7 +70,7 @@ async def test_manager_integration_backend():
 async def test_manager_multi_turn_memory():
     """Verify that the manager LLM remembers previous turns in a multi-turn conversation."""
     input_queue = asyncio.Queue()
-    from cli_textual.agents.specialists import get_model
+    from cli_textual.agents.model import get_model
     real_model = get_model()
     
     if isinstance(real_model, TestModel):
