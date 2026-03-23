@@ -13,8 +13,8 @@ async def test_initial_focus():
 @pytest.mark.asyncio
 async def test_load_command():
     import os, json
-    os.makedirs(".cbio", exist_ok=True)
-    with open(".cbio/settings.json", "w") as f:
+    os.makedirs(".agents", exist_ok=True)
+    with open(".agents/settings.json", "w") as f:
         json.dump({"approved_tools": ["/load"]}, f)
 
     app = ChatApp()

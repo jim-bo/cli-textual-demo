@@ -10,8 +10,8 @@ from textual.widgets import DirectoryTree, Label, DataTable
 async def test_tool_path_jailing():
     app = ChatApp()
     # Mock settings to auto-approve /ls
-    os.makedirs(".cbio", exist_ok=True)
-    with open(".cbio/settings.json", "w") as f:
+    os.makedirs(".agents", exist_ok=True)
+    with open(".agents/settings.json", "w") as f:
         json.dump({"approved_tools": ["/ls"]}, f)
         
     async with app.run_test() as pilot:
@@ -31,8 +31,8 @@ async def test_tool_path_jailing():
 @pytest.mark.asyncio
 async def test_ls_mounts_tree():
     # Mock settings to auto-approve /ls for this test
-    os.makedirs(".cbio", exist_ok=True)
-    with open(".cbio/settings.json", "w") as f:
+    os.makedirs(".agents", exist_ok=True)
+    with open(".agents/settings.json", "w") as f:
         json.dump({"approved_tools": ["/ls"]}, f)
     app = ChatApp()
         
@@ -55,9 +55,9 @@ async def test_ls_mounts_tree():
 async def test_permission_modal_appears():
     app = ChatApp()
     # Ensure settings is empty
-    os.makedirs(".cbio", exist_ok=True)
-    if os.path.exists(".cbio/settings.json"):
-        os.remove(".cbio/settings.json")
+    os.makedirs(".agents", exist_ok=True)
+    if os.path.exists(".agents/settings.json"):
+        os.remove(".agents/settings.json")
         
     async with app.run_test() as pilot:
         text_area = app.query_one("#main-input", GrowingTextArea)
