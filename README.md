@@ -81,7 +81,7 @@ User input → run_manager_pipeline() → Agent (pydantic-ai)
          TUI renders: spinners, tool output, thinking, markdown
 ```
 
-Key events: `AgentThinking`, `AgentThinkingChunk`, `AgentToolStart`, `AgentToolOutput`, `AgentToolEnd`, `AgentStreamChunk`, `AgentComplete`
+Key events: `AgentThinking` (status label), `AgentThinkingChunk`/`AgentThinkingComplete` (reasoning tokens), `AgentToolStart`, `AgentToolOutput`, `AgentToolEnd`, `AgentStreamChunk`, `AgentComplete`
 
 ### Tool Architecture
 

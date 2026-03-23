@@ -60,7 +60,7 @@ class CommandManager:
         except Exception as e:
             print(f"Error during command discovery: {e}")
 
-    def get_command(self, name: str) -> SlashCommand:
+    def get_command(self, name: str) -> SlashCommand | None:
         return self.commands.get(name.lower())
 
     def get_all_help(self) -> str:

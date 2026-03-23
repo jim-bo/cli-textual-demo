@@ -41,7 +41,7 @@ def get_model():
     # Native providers
     if provider == "anthropic":
         return AnthropicModel(name)
-    if provider == "gemini" or provider == "google":
+    if provider in ("gemini", "google"):
         return GeminiModel(name)
 
     # openai: prefix or bare model name (e.g. "gpt-4o")
