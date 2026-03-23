@@ -20,8 +20,8 @@ from cli_textual.core.permissions import PermissionManager
 from cli_textual.core.command import CommandManager
 from cli_textual.core.dummy_agent import DummyAgent
 from cli_textual.core.chat_events import (
-    ChatEvent, AgentThinking, AgentToolStart, AgentToolEnd, AgentStreamChunk, AgentComplete,
-    AgentRequiresUserInput
+    ChatEvent, AgentThinking, AgentToolStart, AgentToolEnd, AgentToolOutput,
+    AgentStreamChunk, AgentComplete, AgentRequiresUserInput, AgentExecuteCommand
 )
 
 # Pydantic AI Orchestrators
@@ -32,16 +32,6 @@ from cli_textual.ui.widgets.growing_text_area import GrowingTextArea
 from cli_textual.ui.widgets.dna_spinner import DNASpinner
 from cli_textual.ui.screens.permission_screen import PermissionScreen
 from cli_textual.ui.widgets.landing_page import LandingPage
-
-# Plugin Imports (Simulated auto-discovery for now)
-from cli_textual.plugins.commands.ls import ListDirectoryCommand
-from cli_textual.plugins.commands.head import HeadCommand
-from cli_textual.plugins.commands.clear import ClearCommand
-from cli_textual.plugins.commands.load import LoadCommand
-from cli_textual.plugins.commands.select import SelectCommand
-from cli_textual.plugins.commands.survey import SurveyCommand
-from cli_textual.plugins.commands.help import HelpCommand
-from cli_textual.plugins.commands.mode import ModeCommand
 
 class ChatApp(App):
     """Refactored ChatApp using modular architecture."""
@@ -61,8 +51,10 @@ class ChatApp(App):
         self.last_ctrl_d_time = 0
         self.survey_answers = {}
         # Allow setting default mode via environment variable
-        self.chat_mode = os.getenv("CHAT_MODE", "dummy") 
+        self.chat_mode = os.getenv("CHAT_MODE", "manager") 
         self.message_history = [] # For LLM context memory
+        self.interactive_input_queue = asyncio.Queue()
+
         
         # Initialize Core Managers
         self.workspace_root = Path.cwd().resolve()
@@ -71,18 +63,8 @@ class ChatApp(App):
         self.command_manager = CommandManager()
         self.agent = DummyAgent()
         
-        # Register Commands
-        self._init_commands()
-
-    def _init_commands(self):
-        self.command_manager.register_command(ListDirectoryCommand())
-        self.command_manager.register_command(HeadCommand())
-        self.command_manager.register_command(ClearCommand())
-        self.command_manager.register_command(LoadCommand())
-        self.command_manager.register_command(SelectCommand())
-        self.command_manager.register_command(SurveyCommand())
-        self.command_manager.register_command(HelpCommand())
-        self.command_manager.register_command(ModeCommand())
+        # Register Commands via Auto-Discovery
+        self.command_manager.auto_discover("cli_textual.plugins.commands")
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -95,6 +77,9 @@ class ChatApp(App):
             with Horizontal(id="status-bar"):
                 yield Label("workspace (/directory)", classes="status-info")
                 yield Label(f"mode: {self.chat_mode}", classes="status-info mode-info")
+                from cli_textual.agents.specialists import model
+                model_name = getattr(model, "model_name", "test-mock")
+                yield Label(f"model: {model_name}", classes="status-info model-info")
             yield Label(str(self.workspace_root), classes="path-info")
         yield Footer()
 
@@ -134,6 +119,9 @@ class ChatApp(App):
         
         # Resume the agent by pushing the selection into the queue
         if hasattr(self, "interactive_input_queue"):
+            # Drain any stale entries (safety measure)
+            while not self.interactive_input_queue.empty():
+                self.interactive_input_queue.get_nowait()
             self.interactive_input_queue.put_nowait(selection)
         
         # Refocus main input
@@ -168,8 +156,6 @@ class ChatApp(App):
             await self.process_command(user_input)
         else:
             # Select orchestrator based on chat_mode
-            self.interactive_input_queue = asyncio.Queue()
-            
             if self.chat_mode == "procedural":
                 generator = run_procedural_pipeline(user_input, message_history=self.message_history)
             elif self.chat_mode == "manager":
@@ -219,28 +205,43 @@ class ChatApp(App):
                 
                 history.scroll_end(animate=False)
 
+            elif isinstance(event, AgentExecuteCommand):
+                # Proactively execute a TUI command
+                full_cmd = event.command_name
+                if event.args:
+                    full_cmd += " " + " ".join(event.args)
+                await self.process_command(full_cmd)
+
             elif isinstance(event, AgentToolStart):
                 task_label.update(f"Running tool: [bold cyan]{event.tool_name}[/]")
+
+            elif isinstance(event, AgentToolOutput):
+                style_class = "tool-output-error" if event.is_error else "tool-output"
+                history.mount(Static(event.content, classes=style_class))
+                history.scroll_end(animate=False)
+
+            elif isinstance(event, AgentToolEnd):
+                task_label.update(f"Tool complete: [bold green]{event.tool_name}[/]")
             
             elif isinstance(event, AgentStreamChunk):
                 # If we're starting to stream, remove the spinner and create the Markdown widget
                 if not markdown_widget:
-                    progress.remove()
+                    await progress.remove()
                     markdown_widget = Markdown("", classes="ai-msg")
-                    history.mount(markdown_widget)
-                
+                    await history.mount(markdown_widget)
+
                 full_text += event.text
-                markdown_widget.update(full_text)
+                await markdown_widget.update(full_text)
                 history.scroll_end(animate=False)
-            
+
             elif isinstance(event, AgentComplete):
                 # Save new history for context memory
                 if event.new_history:
                     self.message_history.extend(event.new_history)
-                
+
                 # If we never got a stream (e.g. only tool calls), remove progress
                 if "agent-progress" in [c.id for c in history.children]:
-                    progress.remove()
+                    await progress.remove()
                 history.scroll_end(animate=False)
 
     async def process_command(self, cmd_str: str):

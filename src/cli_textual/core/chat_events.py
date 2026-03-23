@@ -21,6 +21,12 @@ class AgentRequiresUserInput(ChatEvent):
     options: List[str]
 
 @dataclass
+class AgentExecuteCommand(ChatEvent):
+    """The agent wants to execute a TUI slash command."""
+    command_name: str
+    args: List[str]
+
+@dataclass
 class AgentThinking(ChatEvent):
     """The agent is processing or waiting for a response."""
     message: str = "Thinking..."
@@ -36,6 +42,13 @@ class AgentToolEnd(ChatEvent):
     """The agent has finished executing a tool."""
     tool_name: str
     result: str
+
+@dataclass
+class AgentToolOutput(ChatEvent):
+    """Streaming output from a running tool (e.g., bash stdout, file contents)."""
+    tool_name: str
+    content: str
+    is_error: bool = False
 
 @dataclass
 class AgentStreamChunk(ChatEvent):

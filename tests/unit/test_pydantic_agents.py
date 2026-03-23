@@ -1,6 +1,8 @@
 import asyncio
 import pytest
-from cli_textual.agents.orchestrators import run_procedural_pipeline, run_manager_pipeline
+from pydantic_ai.models.function import FunctionModel, AgentInfo
+from pydantic_ai.messages import ModelMessage
+from cli_textual.agents.orchestrators import run_procedural_pipeline, run_manager_pipeline, manager_agent
 from cli_textual.core.chat_events import (
     AgentThinking, AgentToolStart, AgentToolEnd, AgentStreamChunk, AgentComplete,
     AgentRequiresUserInput
@@ -23,21 +25,17 @@ async def test_procedural_pipeline_flow():
 @pytest.mark.asyncio
 async def test_manager_pipeline_flow():
     """Verify that the manager pipeline initializes and completes."""
+    async def fixed_response(messages: list[ModelMessage], agent_info: AgentInfo):
+        yield "done"
+
     events = []
     input_queue = asyncio.Queue()
-    
-    # We wrap this in a timeout to prevent hanging
-    try:
+
+    with manager_agent.override(model=FunctionModel(stream_function=fixed_response)):
         async with asyncio.timeout(5):
             pipeline = run_manager_pipeline("test prompt", input_queue)
             async for event in pipeline:
                 events.append(event)
-                # If the TestModel randomly decides to call a tool (like selection), unblock it
-                if isinstance(event, AgentRequiresUserInput):
-                    await input_queue.put("mock selection")
-    except asyncio.TimeoutError:
-        pytest.fail("test_manager_pipeline_flow timed out - likely deadlocked on queue.get()")
-    
-    # Manager pipeline using TestModel should at least think and complete.
+
     assert any(isinstance(e, AgentThinking) for e in events)
     assert isinstance(events[-1], AgentComplete)
