@@ -1,6 +1,6 @@
 import ipaddress
 import socket
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from cli_textual.tools.base import ToolResult
@@ -74,7 +74,7 @@ async def _safe_get(url: str) -> httpx.Response:
 
         # sni_hostname tells httpcore to use the original hostname for TLS SNI
         # and certificate verification instead of the pinned IP.
-        extensions = {"sni_hostname": original_host.encode()} if parsed.scheme == "https" else {}
+        extensions = {"sni_hostname": original_host} if parsed.scheme == "https" else {}
 
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.get(
@@ -85,9 +85,11 @@ async def _safe_get(url: str) -> httpx.Response:
             )
 
         if response.is_redirect:
-            url = str(response.next_request.url) if response.next_request else response.headers.get("location", "")
-            if not url:
+            location = response.headers.get("location", "")
+            if not location:
                 break
+            # Resolve relative redirects against the current URL
+            url = urljoin(url, location)
             continue
         return response
 
