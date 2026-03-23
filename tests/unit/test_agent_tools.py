@@ -159,6 +159,7 @@ async def test_web_fetch_returns_body():
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.text = '{"key": "value"}'
+    mock_response.is_redirect = False
 
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(return_value=mock_response)
@@ -183,6 +184,7 @@ async def test_web_fetch_emits_lifecycle_events():
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.text = "body content"
+    mock_response.is_redirect = False
 
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(return_value=mock_response)

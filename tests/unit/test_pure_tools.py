@@ -61,6 +61,7 @@ async def test_web_fetch_returns_body():
     mock_response = AsyncMock()
     mock_response.text = '{"key": "value"}'
     mock_response.status_code = 200
+    mock_response.is_redirect = False
 
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(return_value=mock_response)

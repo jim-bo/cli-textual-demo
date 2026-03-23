@@ -52,45 +52,67 @@ def _is_url_safe(url: str) -> str | None:
     return err
 
 
-class _SafeTransport(httpx.AsyncHTTPTransport):
-    """Transport that pins connections to a pre-resolved IP."""
+_MAX_REDIRECTS = 5
 
-    def __init__(self, pinned_ip: str, **kwargs):
-        super().__init__(**kwargs)
-        self._pinned_ip = pinned_ip
 
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        # Replace the hostname with the pinned IP in the URL while keeping
-        # the Host header intact (httpx sets it from the original URL).
-        url = request.url.copy_with(host=self._pinned_ip)
-        request = httpx.Request(
-            method=request.method,
-            url=url,
-            headers=request.headers,
-            stream=request.stream,
-            extensions=request.extensions,
-        )
-        return await super().handle_async_request(request)
+async def _safe_get(url: str) -> httpx.Response:
+    """GET *url* with SSRF checks on every redirect hop.
+
+    Each hop resolves DNS, validates the target, and pins the connection
+    to the resolved IP with the correct ``sni_hostname`` for TLS.
+    """
+    for _ in range(_MAX_REDIRECTS):
+        err, safe_ip = _check_url(url)
+        if err:
+            raise _SSRFBlocked(err)
+
+        parsed = urlparse(url)
+        original_host = parsed.hostname
+
+        # Build a URL that connects to the pinned IP but preserves scheme/path/query
+        pinned_url = parsed._replace(netloc=f"{safe_ip}:{parsed.port}" if parsed.port else safe_ip).geturl()
+
+        # sni_hostname tells httpcore to use the original hostname for TLS SNI
+        # and certificate verification instead of the pinned IP.
+        extensions = {"sni_hostname": original_host.encode()} if parsed.scheme == "https" else {}
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.get(
+                pinned_url,
+                headers={"Host": original_host},
+                extensions=extensions,
+                follow_redirects=False,
+            )
+
+        if response.is_redirect:
+            url = str(response.next_request.url) if response.next_request else response.headers.get("location", "")
+            if not url:
+                break
+            continue
+        return response
+
+    raise _SSRFBlocked("Error: too many redirects")
+
+
+class _SSRFBlocked(Exception):
+    pass
 
 
 async def web_fetch(url: str) -> ToolResult:
     """Fetch a URL via HTTP GET and return the response body.
 
     Response body is capped at 8 KB.  Private/internal URLs are blocked.
-    DNS is resolved once and pinned to prevent rebinding attacks.
+    DNS is resolved and pinned per hop to prevent rebinding attacks.
     """
-    safety_err, safe_ip = _check_url(url)
-    if safety_err:
-        return ToolResult(output=safety_err, is_error=True)
     try:
-        transport = _SafeTransport(pinned_ip=safe_ip)
-        async with httpx.AsyncClient(transport=transport, follow_redirects=True, timeout=30) as client:
-            response = await client.get(url)
+        response = await _safe_get(url)
         body = response.text
         truncated = ""
         if len(body) > MAX_CHARS:
             body = body[:MAX_CHARS]
             truncated = "\n[truncated]"
         return ToolResult(output=f"HTTP {response.status_code}\n{body}{truncated}")
+    except _SSRFBlocked as exc:
+        return ToolResult(output=str(exc), is_error=True)
     except Exception as exc:
         return ToolResult(output=f"Error fetching URL: {exc}", is_error=True)
