@@ -48,9 +48,9 @@ serve.log
 *.svg
 
 # Project Specific
-.cbio/settings.json
-! .gemini/plans/*.md
-! .gemini/settings.json
+.agents/settings.json
+.gemini/
+.claude/
 
 # OS
 .DS_Store
