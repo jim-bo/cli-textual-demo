@@ -37,6 +37,15 @@ Dependencies flow down only: TUI → agents → events ← tools
 - Never use `COMMANDS` as a class variable name — reserved by Textual's Command Palette.
 - In tests, `await pilot.pause(0.1)` after key presses before asserting UI state.
 
+## Git Workflow
+
+- Never commit directly to main. Always create a feature branch.
+- Commit logical chunks with descriptive messages.
+- Push the branch and create a PR via `gh pr create`.
+- Wait for CodeRabbit review. Read its comments, fix valid findings, reply to each.
+- Once all findings are addressed and tests pass, merge via `gh pr merge`.
+- Sensitive files (`.gemini/`, `.claude/`, `.agents/`) are gitignored — never commit API keys.
+
 ## Maintaining AGENTS.md
 
 Every directory has its own AGENTS.md describing that level only. CLAUDE.md and GEMINI.md are symlinks to AGENTS.md.
