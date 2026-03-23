@@ -1,3 +1,12 @@
+---
+title: CLI Textual Demo
+emoji: 🚀
+colorFrom: indigo
+colorTo: blue
+sdk: docker
+pinned: false
+---
+
 # Agent TUI — A Teaching Package for Building AI Agent Interfaces
 
 A Python reference implementation showing how to build a terminal-based AI agent with tool use, interactive UI, and streaming responses. Built with [Textual](https://textual.textualize.io/) and [pydantic-ai](https://ai.pydantic.dev/).
