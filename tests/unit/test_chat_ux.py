@@ -3,7 +3,7 @@ from pydantic_ai.models.function import FunctionModel, AgentInfo
 from pydantic_ai.messages import ModelMessage
 from textual.widgets import Markdown
 from cli_textual.app import ChatApp
-from cli_textual.agents.orchestrators import manager_agent
+from cli_textual.agents.manager import manager_agent
 
 
 @pytest.mark.asyncio

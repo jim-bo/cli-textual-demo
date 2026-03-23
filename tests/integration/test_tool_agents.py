@@ -8,7 +8,7 @@ import os
 import asyncio
 import pytest
 
-from cli_textual.agents.orchestrators import manager_agent, run_manager_pipeline
+from cli_textual.agents.manager import manager_agent, run_manager_pipeline
 from cli_textual.core.chat_events import (
     AgentToolStart, AgentToolOutput, AgentStreamChunk, AgentComplete,
     AgentRequiresUserInput,

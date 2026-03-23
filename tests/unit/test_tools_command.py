@@ -4,7 +4,7 @@ from pydantic_ai.models.test import TestModel
 from textual.widgets import Label, OptionList, Static
 from cli_textual.app import ChatApp
 from cli_textual.plugins.commands.tools import ToolsWidget, ToolsCommand, _first_line
-from cli_textual.agents.orchestrators import manager_agent
+from cli_textual.agents.manager import manager_agent
 
 
 # ---------------------------------------------------------------------------

@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch, AsyncMock
 from cli_textual.core.chat_events import (
     ChatDeps, AgentToolStart, AgentToolEnd, AgentToolOutput,
 )
-from cli_textual.agents.orchestrators import bash_exec, read_file, web_fetch
+from cli_textual.agents.manager import bash_exec, read_file, web_fetch
 
 
 # ---------------------------------------------------------------------------

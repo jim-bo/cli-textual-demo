@@ -5,7 +5,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.function import FunctionModel, AgentInfo, DeltaToolCall
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 
-from cli_textual.agents.orchestrators import manager_agent, run_manager_pipeline
+from cli_textual.agents.manager import manager_agent, run_manager_pipeline
 from cli_textual.core.chat_events import AgentRequiresUserInput, AgentStreamChunk, AgentComplete, AgentThinking
 
 

@@ -4,7 +4,7 @@ from textual.app import ComposeResult
 from textual.widgets import Label, OptionList, Static
 from textual.widget import Widget
 from cli_textual.core.command import SlashCommand
-from cli_textual.agents.orchestrators import manager_agent
+from cli_textual.agents.manager import manager_agent
 
 
 def _first_line(text: str) -> str:
