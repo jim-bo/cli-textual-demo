@@ -69,8 +69,10 @@ async def _safe_get(url: str) -> httpx.Response:
         parsed = urlparse(url)
         original_host = parsed.hostname
 
-        # Build a URL that connects to the pinned IP but preserves scheme/path/query
-        pinned_url = parsed._replace(netloc=f"{safe_ip}:{parsed.port}" if parsed.port else safe_ip).geturl()
+        # Build a URL that connects to the pinned IP but preserves scheme/path/query.
+        # IPv6 addresses need square brackets in the netloc.
+        ip_host = f"[{safe_ip}]" if ":" in safe_ip else safe_ip
+        pinned_url = parsed._replace(netloc=f"{ip_host}:{parsed.port}" if parsed.port else ip_host).geturl()
 
         # sni_hostname tells httpcore to use the original hostname for TLS SNI
         # and certificate verification instead of the pinned IP.
