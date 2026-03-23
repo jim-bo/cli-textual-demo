@@ -55,6 +55,7 @@ class ChatApp(App):
         self.message_history = [] # For LLM context memory
         self.interactive_input_queue = asyncio.Queue()
         self.verbose_mode = False
+        self._agent_waiting_for_input = False
 
         
         # Initialize Core Managers
@@ -109,14 +110,15 @@ class ChatApp(App):
     def handle_agent_selection(self, event: OptionList.OptionSelected) -> None:
         """Handle user making a choice requested by an agent tool."""
         selection = str(event.option.prompt)
+        self._agent_waiting_for_input = False
         # Clear the interaction area
         interaction = self.query_one("#interaction-container")
         interaction.remove_class("visible")
         interaction.query("*").remove()
-        
+
         # Log choice to history
         self.add_to_history(f"Selected: **{selection}**", is_user=True)
-        
+
         # Resume the agent by pushing the selection into the queue
         if hasattr(self, "interactive_input_queue"):
             # Drain any stale entries (safety measure)
@@ -206,17 +208,18 @@ class ChatApp(App):
             
             elif isinstance(event, AgentRequiresUserInput):
                 # Pause and show the interaction UI
+                self._agent_waiting_for_input = True
                 interaction = self.query_one("#interaction-container")
                 interaction.add_class("visible")
                 interaction.query("*").remove()
-                
+
                 interaction.mount(Label(event.prompt))
-                
+
                 if event.tool_name == "/select":
                     options = OptionList(*event.options, id="agent-select-tool")
                     interaction.mount(options)
                     self.call_after_refresh(options.focus)
-                
+
                 history.scroll_end(animate=False)
 
             elif isinstance(event, AgentExecuteCommand):
@@ -312,12 +315,18 @@ class ChatApp(App):
 
     def check_focus_loss(self):
         try:
+            if self._agent_waiting_for_input:
+                return
             container = self.query_one("#interaction-container")
-            if "visible" in container.classes and not any(w.has_focus for w in container.query("*")): self.cancel_interaction()
+            if "visible" in container.classes and not any(w.has_focus for w in container.query("*")):
+                self.cancel_interaction()
         except: pass
 
     def action_cancel_interaction(self):
-        if "visible" in self.query_one("#interaction-container").classes: self.cancel_interaction()
+        if self._agent_waiting_for_input:
+            return
+        if "visible" in self.query_one("#interaction-container").classes:
+            self.cancel_interaction()
 
     def cancel_interaction(self):
         container = self.query_one("#interaction-container")

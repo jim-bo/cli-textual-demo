@@ -58,9 +58,8 @@ LandingPage {
 }
 
 #landing-graphic {
-    height: 2;
+    height: 3;
     width: 10;
-    background: #2A2A2A;
     margin: 0;
 }
 
@@ -73,7 +72,7 @@ LandingPage {
 
 .landing-info {
     color: #888888;
-    height: 1;
+    height: auto;
 }
 
 .landing-header {
