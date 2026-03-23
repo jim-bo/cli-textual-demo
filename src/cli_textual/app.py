@@ -18,14 +18,13 @@ from textual.binding import Binding
 from cli_textual.core.fs import FSManager
 from cli_textual.core.permissions import PermissionManager
 from cli_textual.core.command import CommandManager
-from cli_textual.core.dummy_agent import DummyAgent
 from cli_textual.core.chat_events import (
     ChatEvent, AgentThinking, AgentToolStart, AgentToolEnd, AgentToolOutput,
     AgentStreamChunk, AgentComplete, AgentRequiresUserInput, AgentExecuteCommand
 )
 
 # Pydantic AI Orchestrators
-from cli_textual.agents.orchestrators import run_procedural_pipeline, run_manager_pipeline
+from cli_textual.agents.orchestrators import run_manager_pipeline
 
 # UI Component Imports
 from cli_textual.ui.widgets.growing_text_area import GrowingTextArea
@@ -61,7 +60,6 @@ class ChatApp(App):
         self.fs_manager = FSManager(self.workspace_root)
         self.permission_manager = PermissionManager(self.workspace_root / ".cbio" / "settings.json")
         self.command_manager = CommandManager()
-        self.agent = DummyAgent()
         
         # Register Commands via Auto-Discovery
         self.command_manager.auto_discover("cli_textual.plugins.commands")
@@ -77,7 +75,7 @@ class ChatApp(App):
             with Horizontal(id="status-bar"):
                 yield Label("workspace (/directory)", classes="status-info")
                 yield Label(f"mode: {self.chat_mode}", classes="status-info mode-info")
-                from cli_textual.agents.specialists import model
+                from cli_textual.agents.model import model
                 model_name = getattr(model, "model_name", "test-mock")
                 yield Label(f"model: {model_name}", classes="status-info model-info")
             yield Label(str(self.workspace_root), classes="path-info")
@@ -155,14 +153,7 @@ class ChatApp(App):
         if user_input.startswith("/"):
             await self.process_command(user_input)
         else:
-            # Select orchestrator based on chat_mode
-            if self.chat_mode == "procedural":
-                generator = run_procedural_pipeline(user_input, message_history=self.message_history)
-            elif self.chat_mode == "manager":
-                generator = run_manager_pipeline(user_input, self.interactive_input_queue, message_history=self.message_history)
-            else:
-                generator = self.agent.ask(user_input)
-                
+            generator = run_manager_pipeline(user_input, self.interactive_input_queue, message_history=self.message_history)
             self.run_worker(self.stream_agent_response(generator))
         self.query_one("#main-input").focus()
 
