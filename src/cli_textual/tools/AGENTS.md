@@ -6,8 +6,8 @@ Pure async functions returning `ToolResult(output, is_error, exit_code)`. **ZERO
 
 - `base.py` — `ToolResult` dataclass
 - `bash.py` — `bash_exec(command, working_dir) -> ToolResult`
-- `read_file.py` — `read_file(path, start_line, end_line) -> ToolResult`
-- `web_fetch.py` — `web_fetch(url) -> ToolResult`
+- `read_file.py` — `read_file(path, start_line, end_line, workspace_root) -> ToolResult` — path jailed to workspace (always on)
+- `web_fetch.py` — `web_fetch(url) -> ToolResult` — SSRF protection blocks private/internal IPs (always on)
 
 ## Rules
 

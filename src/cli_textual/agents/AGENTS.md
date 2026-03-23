@@ -12,3 +12,4 @@
 - Tool wrappers delegate to pure functions in `tools/` and emit events to `event_queue`.
 - `ChatDeps` (from `core/chat_events.py`) carries `event_queue` and `input_queue` as agent dependencies.
 - To add a new tool: write the pure function in `tools/`, then add a `@manager_agent.tool` wrapper here that emits `AgentToolStart` → delegates → `AgentToolOutput` → `AgentToolEnd`.
+- **Safe mode** (`SAFE_MODE=1` env var): disables `bash_exec` tool and appends `safety_preamble` from `prompts.yaml` to the system prompt. Set in Dockerfile for public hosting.

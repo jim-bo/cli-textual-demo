@@ -5,15 +5,24 @@ MAX_CHARS = 8192
 MAX_LINES = 200
 
 
-async def read_file(path: str, start_line: int = 1, end_line: int | None = None) -> ToolResult:
+async def read_file(
+    path: str,
+    start_line: int = 1,
+    end_line: int | None = None,
+    workspace_root: Path | None = None,
+) -> ToolResult:
     """Read the contents of a local file, optionally restricted to a line range.
 
-    Capped at 200 lines / 8 KB.
+    Capped at 200 lines / 8 KB.  Path is jailed to the workspace directory.
     """
     try:
+        workspace = (workspace_root or Path.cwd()).resolve()
         file_path = Path(path)
         if not file_path.is_absolute():
-            file_path = Path.cwd() / file_path
+            file_path = workspace / file_path
+        file_path = file_path.resolve()
+        if workspace not in file_path.parents and file_path != workspace:
+            return ToolResult(output="Error: access denied — path outside workspace", is_error=True)
         lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
         start = max(0, start_line - 1)
         end = min(len(lines), end_line if end_line is not None else len(lines))

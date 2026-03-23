@@ -18,6 +18,7 @@ EXPOSE 7860
 # Set environment variables
 ENV PYTHONPATH=/app/src
 ENV PYTHONUNBUFFERED=1
+ENV SAFE_MODE=1
 
 # Run textual-serve; use SPACE_HOST (set by HF Spaces) for public URL so
 # the served HTML references the correct host instead of 0.0.0.0.

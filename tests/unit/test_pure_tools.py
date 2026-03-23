@@ -30,22 +30,20 @@ async def test_bash_exec_invalid_command():
 
 
 @pytest.mark.asyncio
-async def test_read_file_returns_contents():
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-        f.write("line1\nline2\nline3\n")
-        f.flush()
-        result = await read_file(f.name)
+async def test_read_file_returns_contents(tmp_path):
+    f = tmp_path / "test.txt"
+    f.write_text("line1\nline2\nline3\n")
+    result = await read_file(str(f), workspace_root=tmp_path)
     assert "line1" in result.output
     assert "line2" in result.output
     assert not result.is_error
 
 
 @pytest.mark.asyncio
-async def test_read_file_line_range():
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-        f.write("a\nb\nc\nd\n")
-        f.flush()
-        result = await read_file(f.name, start_line=2, end_line=3)
+async def test_read_file_line_range(tmp_path):
+    f = tmp_path / "test.txt"
+    f.write_text("a\nb\nc\nd\n")
+    result = await read_file(str(f), start_line=2, end_line=3, workspace_root=tmp_path)
     assert "b" in result.output
     assert "c" in result.output
     assert "a" not in result.output
@@ -63,13 +61,15 @@ async def test_web_fetch_returns_body():
     mock_response = AsyncMock()
     mock_response.text = '{"key": "value"}'
     mock_response.status_code = 200
+    mock_response.is_redirect = False
 
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(return_value=mock_response)
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("cli_textual.tools.web_fetch.httpx.AsyncClient", return_value=mock_client):
+    with patch("cli_textual.tools.web_fetch.socket.getaddrinfo", return_value=[(None, None, None, None, ("93.184.216.34", 0))]), \
+         patch("cli_textual.tools.web_fetch.httpx.AsyncClient", return_value=mock_client):
         result = await web_fetch("https://example.com")
     assert "200" in result.output
     assert "value" in result.output
@@ -83,7 +83,8 @@ async def test_web_fetch_network_error():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("cli_textual.tools.web_fetch.httpx.AsyncClient", return_value=mock_client):
+    with patch("cli_textual.tools.web_fetch.socket.getaddrinfo", return_value=[(None, None, None, None, ("93.184.216.34", 0))]), \
+         patch("cli_textual.tools.web_fetch.httpx.AsyncClient", return_value=mock_client):
         result = await web_fetch("https://unreachable.invalid")
     assert result.is_error
     assert "Connection refused" in result.output
