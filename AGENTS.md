@@ -1,36 +1,44 @@
-# Textualize Observations for AI Agents
+# AGENTS.md
 
-Developing TUI applications with Textualize as an AI agent provides several unique insights into building robust terminal interfaces.
+Teaching package: building AI agent TUIs with Textual + pydantic-ai. Each layer is independent and testable.
 
-## Instructions
-- Use TDD (test driven development). think about how you will test the new feature, write the test that fails.
-- If you don't know how to test a new feature ASK for clarification.
-- The user may tell you to skip TDD for a specific request, that is OK but you need user permission to do that.
+## Setup
 
-## Key Learning Points
+```bash
+uv sync
+uv run demo-cli          # terminal
+uv run pytest tests/unit/ -v  # tests (5s timeout per test)
+```
 
-### 1. Robust Testing with Pilot
-Textual's built-in testing framework (`app.run_test()`) is essential for AI agents. It allows for headless verification of complex UI states, focus transitions, and message passing without needing a physical terminal or interfering with the user's view.
+## Architecture
 
-### 2. Widget Subclassing for Event Isolation
-Handling specific key events (like "Enter" for submission) is much more reliable when implemented within a custom widget subclass (e.g., `GrowingTextArea`). This ensures the event is caught and handled before the base widget's internal logic can intercept or swallow it, which is particularly critical for consistent behavior during automated tests.
+```
+tools/   → pure async functions returning ToolResult (no TUI imports)
+core/    → chat_events.py defines typed events (agent↔TUI contract)
+agents/  → pydantic-ai agent wraps tools, emits events via queue
+app.py   → Textual TUI consumes events, renders UI
+plugins/ → slash commands (auto-discovered)
+```
 
-### 3. Asynchronous DOM Operations
-DOM operations like `widget.remove()` are asynchronous in Textual. Attempting to mount a new widget with an identical ID immediately after calling `remove()` on its predecessor will trigger `DuplicateIds` errors. For AI agents, the safest patterns are:
-- Using dynamic/unique IDs (e.g., appending a timestamp).
-- Explicitly awaiting or pausing between removal and re-mounting in test scripts.
+Dependencies flow down only: TUI → agents → events ← tools
 
-### 4. Focus Management
-Focus cannot be successfully applied to a widget until it is fully mounted and the DOM has refreshed. Using `self.call_after_refresh(widget.focus)` is the recommended pattern for ensuring a newly created interactive element (like a selection menu) gains focus the moment it appears.
+## Testing
 
-### 5. Key Event Normalization
-Key strings provided by `events.Key` can vary in capitalization (e.g., "enter" vs "Enter") depending on the environment or the input driver. Always normalize key strings using `.lower()` during comparisons to ensure the application remains robust across different terminal emulators.
+- TDD required. Write failing test first, then implement.
+- Use `FunctionModel(stream_function=...)` for deterministic agent tests. Never use `TestModel` (it generates random tool calls).
+- TUI tests: `async with app.run_test() as pilot` — always `await pilot.pause()` after simulated actions.
+- 5-second per-test timeout enforced via pytest-timeout.
 
-### 6. Reserved Attribute Collisions
-Avoid using common generic names like `COMMANDS` as class variables in the `App` class. Textual uses this specific name for its built-in Command Palette logic; shadowing it with a dictionary or other data structure will cause internal library crashes during mount.
+## Textual Gotchas
 
-### 7. Dynamic Tab Lifecycle
-`TabbedContent` requires its internal sub-widgets (like `ContentTabs`) to be fully settled before panes can be reliably added via `add_pane`. When populating tabs dynamically, prefer a small `self.set_timer(0.1, ...)` over `call_after_refresh` to avoid "No immediate child of type ContentTabs" errors.
+- `widget.remove()` is async — await it before mounting a replacement with the same ID.
+- Use `self.call_after_refresh(widget.focus)` to focus newly mounted widgets.
+- Normalize key strings with `.lower()` — capitalization varies by terminal.
+- Never use `COMMANDS` as a class variable name — reserved by Textual's Command Palette.
+- In tests, `await pilot.pause(0.1)` after key presses before asserting UI state.
 
-### 8. Pilot Latency Guard
-In headless tests, the `Pilot` message queue can lag behind the test execution thread. Always `await pilot.pause()` after simulated key presses or text changes before asserting on visibility, class changes, or focus transitions.
+## Maintaining AGENTS.md
+
+Every directory has its own AGENTS.md describing that level only. CLAUDE.md and GEMINI.md are symlinks to AGENTS.md.
+
+**Rule**: when you modify a directory, check if the change affects how an agent should navigate or work there. If so, update that directory's AGENTS.md. Keep entries concise — these are for machines, not humans.
