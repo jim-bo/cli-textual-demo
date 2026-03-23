@@ -4,18 +4,18 @@ from cli_textual.core.command import SlashCommand
 
 class ModeCommand(SlashCommand):
     """Command to toggle the agent orchestration mode."""
-    
+
     @property
     def name(self) -> str:
         return "/mode"
 
     @property
     def description(self) -> str:
-        return "Set chat mode (dummy, procedural, manager)"
+        return "Set chat mode"
 
     async def execute(self, app, args: List[str]):
-        modes = ["dummy", "procedural", "manager"]
-        
+        modes = ["manager"]
+
         if args and args[0] in modes:
             app.chat_mode = args[0]
             app.add_to_history(f"Chat mode set to: **{app.chat_mode}**")
@@ -25,7 +25,7 @@ class ModeCommand(SlashCommand):
             interaction = app.query_one("#interaction-container")
             interaction.add_class("visible")
             interaction.query("*").remove()
-            
+
             interaction.mount(Label("Select Chat Orchestration Mode:"))
             options = OptionList(*modes, id="mode-select-list")
             interaction.mount(options)
