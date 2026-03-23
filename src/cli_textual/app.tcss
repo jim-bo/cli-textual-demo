@@ -224,3 +224,36 @@ DirectoryTree {
     overflow-y: scroll;
     border: solid #333333;
 }
+
+.tool-output {
+    background: #0D1117;
+    color: #C9D1D9;
+    border-left: solid #00AAFF;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+
+.tool-output-error {
+    background: #1A0000;
+    color: #FF6B6B;
+    border-left: solid #FF4444;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+
+.thinking-block {
+    margin: 0 0 1 0;
+    border-left: solid #555555;
+    padding: 0;
+}
+
+.thinking-block CollapsibleTitle {
+    color: #888888;
+    text-style: italic;
+}
+
+.thinking-content {
+    color: #777777;
+    padding: 0 1;
+    background: #1A1A1A;
+}
