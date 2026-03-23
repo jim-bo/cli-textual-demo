@@ -174,7 +174,7 @@ async def test_web_fetch_returns_body():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("cli_textual.agents.orchestrators.httpx.AsyncClient", return_value=mock_client):
+    with patch("cli_textual.tools.web_fetch.httpx.AsyncClient", return_value=mock_client):
         result = await web_fetch(ctx, url="https://example.com/api")
 
     assert "200" in result
@@ -194,7 +194,7 @@ async def test_web_fetch_emits_lifecycle_events():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("cli_textual.agents.orchestrators.httpx.AsyncClient", return_value=mock_client):
+    with patch("cli_textual.tools.web_fetch.httpx.AsyncClient", return_value=mock_client):
         await web_fetch(ctx, url="https://example.com")
 
     events = await drain(event_queue)
@@ -213,7 +213,7 @@ async def test_web_fetch_network_error_returns_error_string():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("cli_textual.agents.orchestrators.httpx.AsyncClient", return_value=mock_client):
+    with patch("cli_textual.tools.web_fetch.httpx.AsyncClient", return_value=mock_client):
         result = await web_fetch(ctx, url="https://unreachable.example")
 
     assert "error" in result.lower() or "Error" in result

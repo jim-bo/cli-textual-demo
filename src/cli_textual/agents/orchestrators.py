@@ -1,8 +1,6 @@
 import os
 import asyncio
-from pathlib import Path
 from typing import AsyncGenerator, List, Any
-import httpx
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.models.test import TestModel
@@ -13,6 +11,9 @@ from cli_textual.core.chat_events import (
     AgentStreamChunk, AgentComplete, AgentRequiresUserInput, ChatDeps, AgentExecuteCommand
 )
 from cli_textual.agents.specialists import model, intent_resolver, data_validator, result_generator
+from cli_textual.tools.bash import bash_exec as pure_bash_exec
+from cli_textual.tools.read_file import read_file as pure_read_file
+from cli_textual.tools.web_fetch import web_fetch as pure_web_fetch
 from cli_textual.core.agent_schemas import IntentResolution, ValidationResult, StructuredResult
 from cli_textual.agents.prompt_loader import PROMPTS
 
@@ -119,40 +120,11 @@ async def bash_exec(ctx: RunContext[ChatDeps], command: str, working_dir: str = 
         working_dir: Working directory for the command (default: current directory)
     """
     await ctx.deps.event_queue.put(AgentToolStart(tool_name="bash_exec", args={"command": command}))
-    MAX_OUTPUT = 8192
-    output_parts: list[str] = []
-    exit_code = 1
-    try:
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            cwd=working_dir,
-        )
-        assert proc.stdout is not None
-        while True:
-            chunk = await proc.stdout.read(1024)
-            if not chunk:
-                break
-            text = chunk.decode("utf-8", errors="replace")
-            output_parts.append(text)
-            await ctx.deps.event_queue.put(AgentToolOutput(tool_name="bash_exec", content=text))
-        await proc.wait()
-        exit_code = proc.returncode or 0
-    except Exception as exc:
-        err = f"Error: {exc}"
-        await ctx.deps.event_queue.put(AgentToolOutput(tool_name="bash_exec", content=err, is_error=True))
-        await ctx.deps.event_queue.put(AgentToolEnd(tool_name="bash_exec", result="error"))
-        return err
-
-    full_output = "".join(output_parts)
-    truncated = ""
-    if len(full_output) > MAX_OUTPUT:
-        full_output = full_output[:MAX_OUTPUT]
-        truncated = "\n[output truncated]"
-    result = f"Exit code: {exit_code}\n{full_output}{truncated}"
-    await ctx.deps.event_queue.put(AgentToolEnd(tool_name="bash_exec", result=f"exit {exit_code}"))
-    return result
+    result = await pure_bash_exec(command, working_dir)
+    await ctx.deps.event_queue.put(AgentToolOutput(tool_name="bash_exec", content=result.output, is_error=result.is_error))
+    status = "error" if result.is_error else f"exit {result.exit_code}"
+    await ctx.deps.event_queue.put(AgentToolEnd(tool_name="bash_exec", result=status))
+    return result.output
 
 
 @manager_agent.tool
@@ -165,32 +137,11 @@ async def read_file(ctx: RunContext[ChatDeps], path: str, start_line: int = 1, e
         end_line: Last line to include (default: read all, capped at 200 lines)
     """
     await ctx.deps.event_queue.put(AgentToolStart(tool_name="read_file", args={"path": path}))
-    MAX_CHARS = 8192
-    MAX_LINES = 200
-    try:
-        file_path = Path(path)
-        if not file_path.is_absolute():
-            file_path = Path.cwd() / file_path
-        lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        start = max(0, start_line - 1)
-        end = min(len(lines), end_line if end_line is not None else len(lines))
-        end = min(end, start + MAX_LINES)
-        selected = lines[start:end]
-        content = "\n".join(selected)
-        truncated = ""
-        if len(content) > MAX_CHARS:
-            content = content[:MAX_CHARS]
-            truncated = "\n[truncated]"
-        result = content + truncated
-    except Exception as exc:
-        result = f"Error reading file: {exc}"
-        await ctx.deps.event_queue.put(AgentToolOutput(tool_name="read_file", content=result, is_error=True))
-        await ctx.deps.event_queue.put(AgentToolEnd(tool_name="read_file", result="error"))
-        return result
-
-    await ctx.deps.event_queue.put(AgentToolOutput(tool_name="read_file", content=result))
-    await ctx.deps.event_queue.put(AgentToolEnd(tool_name="read_file", result=f"{len(selected)} lines"))
-    return result
+    result = await pure_read_file(path, start_line, end_line)
+    await ctx.deps.event_queue.put(AgentToolOutput(tool_name="read_file", content=result.output, is_error=result.is_error))
+    status = "error" if result.is_error else "ok"
+    await ctx.deps.event_queue.put(AgentToolEnd(tool_name="read_file", result=status))
+    return result.output
 
 
 @manager_agent.tool
@@ -204,25 +155,11 @@ async def web_fetch(ctx: RunContext[ChatDeps], url: str) -> str:
         url: The URL to fetch
     """
     await ctx.deps.event_queue.put(AgentToolStart(tool_name="web_fetch", args={"url": url}))
-    MAX_CHARS = 8192
-    try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
-            response = await client.get(url)
-        body = response.text
-        truncated = ""
-        if len(body) > MAX_CHARS:
-            body = body[:MAX_CHARS]
-            truncated = "\n[truncated]"
-        result = f"HTTP {response.status_code}\n{body}{truncated}"
-    except Exception as exc:
-        result = f"Error fetching URL: {exc}"
-        await ctx.deps.event_queue.put(AgentToolOutput(tool_name="web_fetch", content=result, is_error=True))
-        await ctx.deps.event_queue.put(AgentToolEnd(tool_name="web_fetch", result="error"))
-        return result
-
-    await ctx.deps.event_queue.put(AgentToolOutput(tool_name="web_fetch", content=result))
-    await ctx.deps.event_queue.put(AgentToolEnd(tool_name="web_fetch", result=f"HTTP {response.status_code}"))
-    return result
+    result = await pure_web_fetch(url)
+    await ctx.deps.event_queue.put(AgentToolOutput(tool_name="web_fetch", content=result.output, is_error=result.is_error))
+    status = "error" if result.is_error else "ok"
+    await ctx.deps.event_queue.put(AgentToolEnd(tool_name="web_fetch", result=status))
+    return result.output
 
 
 @manager_agent.tool
