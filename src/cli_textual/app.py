@@ -8,8 +8,8 @@ from textual import on, events
 from textual.app import App, ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal
 from textual.widgets import (
-    Header, Footer, Static, Markdown, Label, OptionList, 
-    TabbedContent, DirectoryTree, DataTable
+    Header, Footer, Static, Markdown, Label, OptionList,
+    TabbedContent, DirectoryTree, DataTable, Collapsible
 )
 from textual.widgets.option_list import Option
 from textual.binding import Binding
@@ -20,7 +20,8 @@ from cli_textual.core.permissions import PermissionManager
 from cli_textual.core.command import CommandManager
 from cli_textual.core.chat_events import (
     ChatEvent, AgentThinking, AgentToolStart, AgentToolEnd, AgentToolOutput,
-    AgentStreamChunk, AgentComplete, AgentRequiresUserInput, AgentExecuteCommand
+    AgentStreamChunk, AgentComplete, AgentRequiresUserInput, AgentExecuteCommand,
+    AgentThinkingChunk, AgentThinkingComplete,
 )
 
 # Pydantic AI Orchestrators
@@ -53,12 +54,13 @@ class ChatApp(App):
         self.chat_mode = os.getenv("CHAT_MODE", "manager") 
         self.message_history = [] # For LLM context memory
         self.interactive_input_queue = asyncio.Queue()
+        self.verbose_mode = False
 
         
         # Initialize Core Managers
         self.workspace_root = Path.cwd().resolve()
         self.fs_manager = FSManager(self.workspace_root)
-        self.permission_manager = PermissionManager(self.workspace_root / ".cbio" / "settings.json")
+        self.permission_manager = PermissionManager(self.workspace_root / ".agents" / "settings.json")
         self.command_manager = CommandManager()
         
         # Register Commands via Auto-Discovery
@@ -176,9 +178,30 @@ class ChatApp(App):
         
         markdown_widget = None
         full_text = ""
+        thinking_collapsible = None
+        thinking_widget = None
+        thinking_text = ""
 
         async for event in generator:
-            if isinstance(event, AgentThinking):
+            if isinstance(event, AgentThinkingChunk):
+                if not thinking_collapsible:
+                    thinking_collapsible = Collapsible(
+                        Static("", classes="thinking-content"),
+                        title="Reasoning",
+                        collapsed=not self.verbose_mode,
+                        classes="thinking-block",
+                    )
+                    await history.mount(thinking_collapsible)
+                    thinking_widget = thinking_collapsible.query_one(".thinking-content")
+                thinking_text += event.text
+                thinking_widget.update(thinking_text)
+                history.scroll_end(animate=False)
+
+            elif isinstance(event, AgentThinkingComplete):
+                if thinking_widget:
+                    thinking_widget.update(event.full_text)
+
+            elif isinstance(event, AgentThinking):
                 task_label.update(event.message)
             
             elif isinstance(event, AgentRequiresUserInput):
