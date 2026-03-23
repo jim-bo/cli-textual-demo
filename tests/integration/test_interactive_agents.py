@@ -3,7 +3,7 @@ import pytest
 import asyncio
 from pydantic_ai.models.test import TestModel
 
-from cli_textual.agents.orchestrators import manager_agent, run_manager_pipeline
+from cli_textual.agents.manager import manager_agent, run_manager_pipeline
 from cli_textual.core.chat_events import AgentRequiresUserInput, AgentStreamChunk, AgentComplete, AgentThinking
 
 @pytest.mark.asyncio

@@ -24,7 +24,7 @@ from cli_textual.core.chat_events import (
 )
 
 # Pydantic AI Orchestrators
-from cli_textual.agents.orchestrators import run_manager_pipeline
+from cli_textual.agents.manager import run_manager_pipeline
 
 # UI Component Imports
 from cli_textual.ui.widgets.growing_text_area import GrowingTextArea

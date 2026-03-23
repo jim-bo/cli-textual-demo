@@ -4,7 +4,7 @@ from textual.widgets import OptionList, Markdown, Label
 from pydantic_ai.models.test import TestModel
 
 from cli_textual.app import ChatApp
-from cli_textual.agents.orchestrators import manager_agent
+from cli_textual.agents.manager import manager_agent
 
 @pytest.mark.asyncio
 async def test_full_ui_interaction_round_trip():

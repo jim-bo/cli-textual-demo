@@ -2,7 +2,7 @@ import asyncio
 import pytest
 from pydantic_ai.models.function import FunctionModel, AgentInfo
 from pydantic_ai.messages import ModelMessage
-from cli_textual.agents.orchestrators import run_manager_pipeline, manager_agent
+from cli_textual.agents.manager import run_manager_pipeline, manager_agent
 from cli_textual.core.chat_events import (
     AgentThinking, AgentStreamChunk, AgentComplete,
 )
