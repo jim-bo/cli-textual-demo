@@ -141,7 +141,7 @@ export PYDANTIC_AI_MODEL="test"
 uv run demo-cli
 
 # Browser (via textual-serve)
-PYTHONPATH=src uv run textual serve src/cli_textual/app.py
+PYTHONPATH=src uv run textual serve "python -m cli_textual.app"
 
 # Docker
 docker build -t agent-tui .
