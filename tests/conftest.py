@@ -11,13 +11,13 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 def setup_permissions():
     """Automatically approve all tools before every test."""
     workspace_root = Path.cwd().resolve()
-    settings_dir = workspace_root / ".cbio"
+    settings_dir = workspace_root / ".agents"
     settings_path = settings_dir / "settings.json"
     
     os.makedirs(settings_dir, exist_ok=True)
     with open(settings_path, "w") as f:
         json.dump({
-            "approved_tools": ["/ls", "/head", "/select", "/load", "/survey", "/clear"]
+            "approved_tools": ["/ls", "/head", "/select", "/load", "/survey", "/clear", "/verbose"]
         }, f)
     yield
     # Cleanup if needed

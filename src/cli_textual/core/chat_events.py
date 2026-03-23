@@ -51,6 +51,16 @@ class AgentToolOutput(ChatEvent):
     is_error: bool = False
 
 @dataclass
+class AgentThinkingChunk(ChatEvent):
+    """A partial chunk of the model's reasoning/thinking tokens."""
+    text: str
+
+@dataclass
+class AgentThinkingComplete(ChatEvent):
+    """The model has finished emitting thinking tokens for this turn."""
+    full_text: str
+
+@dataclass
 class AgentStreamChunk(ChatEvent):
     """A partial chunk of the final text response."""
     text: str
