@@ -49,11 +49,12 @@ async def ask_user_to_select(ctx: RunContext[ChatDeps], prompt: str, options: Li
     return response
 
 @manager_agent.tool
-async def execute_slash_command(ctx: RunContext[ChatDeps], command_name: str, args: List[str] = None) -> str:
-    """Execute a TUI slash command (e.g. '/clear', '/ls'). 
+async def execute_slash_command(ctx: RunContext[ChatDeps], command_name: str, args: List[str] | None = None) -> str:
+    """Execute a TUI slash command (e.g. '/clear', '/ls').
     Use this to trigger UI actions or system tools.
     """
-    if args is None: args = []
+    if args is None:
+        args = []
     # Ensure command name starts with /
     if not command_name.startswith("/"):
         command_name = f"/{command_name}"
@@ -81,7 +82,7 @@ async def bash_exec(ctx: RunContext[ChatDeps], command: str, working_dir: str = 
 
 
 @manager_agent.tool
-async def read_file(ctx: RunContext[ChatDeps], path: str, start_line: int = 1, end_line: int = None) -> str:
+async def read_file(ctx: RunContext[ChatDeps], path: str, start_line: int = 1, end_line: int | None = None) -> str:
     """Read the contents of a local file, optionally restricted to a line range.
 
     Args:
@@ -121,7 +122,7 @@ async def web_fetch(ctx: RunContext[ChatDeps], url: str) -> str:
 async def run_manager_pipeline(
     prompt: str, 
     input_queue: asyncio.Queue, 
-    message_history: List[Any] = None
+    message_history: List[Any] | None = None
 ) -> AsyncGenerator[ChatEvent, None]:
     """Execute the manager orchestration using queues for UI bridging."""
     event_queue = asyncio.Queue()
@@ -135,6 +136,7 @@ async def run_manager_pipeline(
                 last_thinking_len = 0
                 last_text_len = 0
                 thinking_complete = False
+                full_thinking = ""
 
                 async for response, is_last in result.stream_responses():
                     # Accumulate thinking and text from all parts
@@ -151,10 +153,11 @@ async def run_manager_pipeline(
                         new_thinking = thinking_text[last_thinking_len:]
                         await event_queue.put(AgentThinkingChunk(text=new_thinking))
                         last_thinking_len = len(thinking_text)
+                        full_thinking = thinking_text
 
                     # Signal thinking done when text starts
                     if text_text and not thinking_complete and last_thinking_len > 0:
-                        await event_queue.put(AgentThinkingComplete(full_text=thinking_text))
+                        await event_queue.put(AgentThinkingComplete(full_text=full_thinking))
                         thinking_complete = True
 
                     # Emit text deltas
@@ -165,7 +168,7 @@ async def run_manager_pipeline(
 
                 # If thinking was emitted but no text followed, still signal complete
                 if last_thinking_len > 0 and not thinking_complete:
-                    await event_queue.put(AgentThinkingComplete(full_text=thinking_text))
+                    await event_queue.put(AgentThinkingComplete(full_text=full_thinking))
 
                 await event_queue.put(AgentComplete(new_history=result.new_messages()))
         except Exception as e:
