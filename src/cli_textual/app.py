@@ -323,7 +323,10 @@ class ChatApp(App):
         except: pass
 
     def action_cancel_interaction(self):
-        if "visible" in self.query_one("#interaction-container").classes: self.cancel_interaction()
+        if self._agent_waiting_for_input:
+            return
+        if "visible" in self.query_one("#interaction-container").classes:
+            self.cancel_interaction()
 
     def cancel_interaction(self):
         container = self.query_one("#interaction-container")
