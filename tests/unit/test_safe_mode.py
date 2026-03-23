@@ -1,6 +1,6 @@
 """Tests for safe-mode protections: path jailing, SSRF blocking, conditional bash."""
+import importlib
 import os
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,27 +14,24 @@ from cli_textual.tools.web_fetch import web_fetch, _is_url_safe
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_read_file_blocks_path_traversal():
-    workspace = Path(tempfile.mkdtemp())
-    result = await read_file("../../etc/passwd", workspace_root=workspace)
+async def test_read_file_blocks_path_traversal(tmp_path):
+    result = await read_file("../../etc/passwd", workspace_root=tmp_path)
     assert result.is_error
     assert "access denied" in result.output
 
 
 @pytest.mark.asyncio
-async def test_read_file_blocks_absolute_escape():
-    workspace = Path(tempfile.mkdtemp())
-    result = await read_file("/etc/passwd", workspace_root=workspace)
+async def test_read_file_blocks_absolute_escape(tmp_path):
+    result = await read_file("/etc/passwd", workspace_root=tmp_path)
     assert result.is_error
     assert "access denied" in result.output
 
 
 @pytest.mark.asyncio
-async def test_read_file_allows_workspace_files():
-    workspace = Path(tempfile.mkdtemp())
-    test_file = workspace / "hello.txt"
+async def test_read_file_allows_workspace_files(tmp_path):
+    test_file = tmp_path / "hello.txt"
     test_file.write_text("hello world")
-    result = await read_file("hello.txt", workspace_root=workspace)
+    result = await read_file("hello.txt", workspace_root=tmp_path)
     assert not result.is_error
     assert "hello world" in result.output
 
@@ -44,7 +41,6 @@ async def test_read_file_allows_workspace_files():
 # ---------------------------------------------------------------------------
 
 def test_is_url_safe_blocks_private_ip():
-    # 169.254.x.x is link-local
     with patch("cli_textual.tools.web_fetch.socket.getaddrinfo") as mock_gai:
         mock_gai.return_value = [(None, None, None, None, ("169.254.169.254", 0))]
         err = _is_url_safe("http://metadata.example.com/latest")
@@ -85,30 +81,50 @@ async def test_web_fetch_blocks_private_ip():
         mock_gai.return_value = [(None, None, None, None, ("169.254.169.254", 0))]
         result = await web_fetch("http://169.254.169.254/latest/meta-data/")
     assert result.is_error
-    assert "private/internal" in result.output
+    assert "blocked host" in result.output or "private/internal" in result.output
+
+
+def test_is_url_safe_blocks_aws_metadata_ip():
+    err = _is_url_safe("http://169.254.169.254/latest/meta-data/")
+    assert err is not None
+    assert "blocked host" in err
+
+
+def test_is_url_safe_blocks_azure_wireserver():
+    err = _is_url_safe("http://168.63.129.16/")
+    assert err is not None
+    assert "blocked host" in err
 
 
 # ---------------------------------------------------------------------------
 # manager agent — conditional bash_exec
 # ---------------------------------------------------------------------------
 
-def test_safe_mode_excludes_bash(monkeypatch):
-    monkeypatch.setenv("SAFE_MODE", "1")
-    # Re-import to trigger rebuild with SAFE_MODE=1
-    import importlib
+@pytest.fixture
+def _reload_manager():
+    """Reload manager module before and after the test for clean state."""
     import cli_textual.agents.manager as mgr
+    original = os.environ.get("SAFE_MODE")
+    yield mgr
+    # Restore original state
+    if original is None:
+        os.environ.pop("SAFE_MODE", None)
+    else:
+        os.environ["SAFE_MODE"] = original
+    importlib.reload(mgr)
+
+
+def test_safe_mode_excludes_bash(monkeypatch, _reload_manager):
+    mgr = _reload_manager
+    monkeypatch.setenv("SAFE_MODE", "1")
     importlib.reload(mgr)
     tool_names = [name for name in mgr.manager_agent._function_toolset.tools]
     assert "bash_exec" not in tool_names
-    # Restore
-    monkeypatch.delenv("SAFE_MODE")
-    importlib.reload(mgr)
 
 
-def test_normal_mode_includes_bash(monkeypatch):
+def test_normal_mode_includes_bash(monkeypatch, _reload_manager):
+    mgr = _reload_manager
     monkeypatch.delenv("SAFE_MODE", raising=False)
-    import importlib
-    import cli_textual.agents.manager as mgr
     importlib.reload(mgr)
     tool_names = [name for name in mgr.manager_agent._function_toolset.tools]
     assert "bash_exec" in tool_names

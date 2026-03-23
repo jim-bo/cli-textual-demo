@@ -10,6 +10,7 @@ from cli_textual.core.chat_events import (
     AgentStreamChunk, AgentComplete, AgentRequiresUserInput, ChatDeps, AgentExecuteCommand,
     AgentThinkingChunk, AgentThinkingComplete,
 )
+from pathlib import Path
 from cli_textual.agents.model import model
 from cli_textual.tools.bash import bash_exec as pure_bash_exec
 from cli_textual.tools.read_file import read_file as pure_read_file
@@ -91,7 +92,7 @@ async def read_file(ctx: RunContext[ChatDeps], path: str, start_line: int = 1, e
         end_line: Last line to include (default: read all, capped at 200 lines)
     """
     await ctx.deps.event_queue.put(AgentToolStart(tool_name="read_file", args={"path": path}))
-    result = await pure_read_file(path, start_line, end_line)
+    result = await pure_read_file(path, start_line, end_line, workspace_root=Path.cwd())
     await ctx.deps.event_queue.put(AgentToolOutput(tool_name="read_file", content=result.output, is_error=result.is_error))
     status = "error" if result.is_error else "ok"
     await ctx.deps.event_queue.put(AgentToolEnd(tool_name="read_file", result=status))
