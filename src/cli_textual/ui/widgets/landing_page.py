@@ -10,10 +10,14 @@ class LandingPage(Static):
             yield Label("— TUI Framework —", id="landing-title")
             with Horizontal(id="landing-content"):
                 with Container(id="landing-left"):
-                    yield Static(id="landing-graphic")
+                    yield Static(
+                        " \\\\\\[o_o]/\n"
+                        "  /|_|\\\n"
+                        "   d b",
+                        id="landing-graphic",
+                    )
                     yield Label("Modular Agentic Interface", id="landing-subtitle")
-                    yield Static("Env: [cyan]dev[/]", classes="landing-info")
-                    yield Static("Status: [green]ready[/]", classes="landing-info")
+                    yield Static("A generic agentic CLI for learning\nhow these things work.", classes="landing-info")
                 
                 with Container(id="landing-right"):
                     yield Label("Slash Commands", classes="landing-header")
