@@ -19,5 +19,6 @@ EXPOSE 7860
 ENV PYTHONPATH=/app/src
 ENV PYTHONUNBUFFERED=1
 
-# Run textual-serve via python -m to ensure it is found within the uv environment
-CMD ["uv", "run", "textual", "serve", "--host", "0.0.0.0", "--port", "7860", "PYTHONPATH=/app/src uv run python -m cli_textual.app"]
+# Run textual-serve; use SPACE_HOST (set by HF Spaces) for public URL so
+# the served HTML references the correct host instead of 0.0.0.0.
+CMD ["sh", "-c", "uv run textual serve --host 0.0.0.0 --port 7860 ${SPACE_HOST:+--url https://$SPACE_HOST} 'PYTHONPATH=/app/src uv run python -m cli_textual.app'"]
