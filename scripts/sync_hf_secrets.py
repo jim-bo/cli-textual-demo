@@ -20,7 +20,10 @@ for key in SECRETS:
     if not value:
         print(f"  SKIP {key} (not set)")
         continue
-    api.add_space_secret(SPACE_ID, key, value)
-    print(f"  SET  {key}")
+    try:
+        api.add_space_secret(SPACE_ID, key, value)
+        print(f"  SET  {key}")
+    except Exception as e:
+        print(f"  FAIL {key}: {e}")
 
 print("Done.")
