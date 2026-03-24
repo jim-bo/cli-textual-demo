@@ -1,6 +1,7 @@
 import asyncio
 import os
 import time
+import uuid
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -26,6 +27,7 @@ from cli_textual.core.chat_events import (
 
 # Pydantic AI Orchestrators
 from cli_textual.agents.manager import run_manager_pipeline
+from cli_textual.agents.observability import init_observability, is_tracing_enabled
 
 # UI Component Imports
 from cli_textual.ui.widgets.growing_text_area import GrowingTextArea
@@ -48,6 +50,8 @@ class ChatApp(App):
 
     def __init__(self):
         super().__init__()
+        init_observability()
+        self.session_id = str(uuid.uuid4())
         self.last_ctrl_d_time = 0
         self.survey_answers = {}
         # Allow setting default mode via environment variable
@@ -81,6 +85,8 @@ class ChatApp(App):
                 from cli_textual.agents.model import model
                 model_name = getattr(model, "model_name", "test-mock")
                 yield Label(f"model: {model_name}", classes="status-info model-info")
+                trace_label = "[green]● langfuse[/]" if is_tracing_enabled() else "[dim]○ langfuse[/]"
+                yield Label(trace_label, classes="status-info")
             yield Label(str(self.workspace_root), classes="path-info")
         yield Footer()
 
@@ -157,7 +163,7 @@ class ChatApp(App):
         if user_input.startswith("/"):
             await self.process_command(user_input)
         else:
-            generator = run_manager_pipeline(user_input, self.interactive_input_queue, message_history=self.message_history)
+            generator = run_manager_pipeline(user_input, self.interactive_input_queue, message_history=self.message_history, session_id=self.session_id)
             self.run_worker(self.stream_agent_response(generator))
         self.query_one("#main-input").focus()
 
