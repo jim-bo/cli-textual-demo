@@ -43,7 +43,6 @@ async def test_ls_mounts_tree():
         await pilot.press("enter")
         await pilot.pause(2.0)
 
-        app.save_screenshot("ls_debug.svg")
         container = app.query_one("#interaction-container")
         assert container.query_one(DataTable)
         assert "visible" in container.classes

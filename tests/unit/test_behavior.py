@@ -15,10 +15,9 @@ async def test_cancel_with_esc():
         await pilot.press("enter")
         await pilot.pause(0.5)
         
-        app.save_screenshot("debug_tools.svg")
         container = app.query_one("#interaction-container")
         assert "visible" in container.classes
-        
+
         # 2. Press Escape
         await pilot.press("escape")
         await pilot.pause(0.5)
@@ -39,10 +38,9 @@ async def test_auto_cancel_on_tab():
         await pilot.press("enter")
         await pilot.pause(0.5)
         
-        app.save_screenshot("debug_tools.svg")
         container = app.query_one("#interaction-container")
         assert "visible" in container.classes
-        
+
         # 2. Manually refocus the main input to trigger Blur on the OptionList
         text_area.focus()
         await pilot.pause(0.5)
