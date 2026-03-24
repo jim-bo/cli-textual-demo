@@ -117,3 +117,18 @@ def test_trace_context_returns_observation_when_enabled():
             session_id="sess-123",
             input="test prompt",
         )
+
+
+def test_trace_context_returns_nullcontext_on_exception():
+    """trace_context() returns nullcontext when client raises an exception."""
+    import cli_textual.agents.observability as obs
+    obs._tracing_enabled = True
+
+    mock_client = MagicMock()
+    mock_client.start_as_current_observation.side_effect = RuntimeError("connection failed")
+    fake = _make_fake_langfuse(mock_client)
+
+    with patch.dict(sys.modules, {"langfuse": fake}):
+        from cli_textual.agents.observability import trace_context
+        ctx = trace_context("test prompt")
+        assert isinstance(ctx, nullcontext)

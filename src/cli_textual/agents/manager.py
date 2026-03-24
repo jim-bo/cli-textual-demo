@@ -166,7 +166,7 @@ async def run_manager_pipeline(
                     thinking_complete = False
                     full_thinking = ""
 
-                    async for response, is_last in result.stream_responses():
+                    async for response, _is_last in result.stream_responses():
                         # Accumulate thinking and text from all parts
                         thinking_text = ""
                         text_text = ""
