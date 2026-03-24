@@ -5,6 +5,7 @@ description = "A Textual TUI prototype mirroring Gemini/Claude CLI UX"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "langfuse>=3.0.0",
     "openai>=2.29.0",
     "pydantic-ai>=1.70.0",
     "pytest>=9.0.2",
@@ -26,6 +27,7 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 timeout = 5
+addopts = "-p no:logfire"
 
 [dependency-groups]
 dev = [

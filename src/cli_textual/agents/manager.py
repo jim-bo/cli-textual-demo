@@ -147,7 +147,8 @@ if not SAFE_MODE:
 async def run_manager_pipeline(
     prompt: str,
     input_queue: asyncio.Queue,
-    message_history: List[Any] | None = None
+    message_history: List[Any] | None = None,
+    session_id: str | None = None,
 ) -> AsyncGenerator[ChatEvent, None]:
     """Execute the manager orchestration using queues for UI bridging."""
     event_queue = asyncio.Queue()
@@ -157,45 +158,47 @@ async def run_manager_pipeline(
 
     async def run_agent():
         try:
-            async with manager_agent.run_stream(prompt, deps=deps, message_history=message_history) as result:
-                last_thinking_len = 0
-                last_text_len = 0
-                thinking_complete = False
-                full_thinking = ""
+            from cli_textual.agents.observability import trace_context
+            with trace_context(prompt, session_id):
+                async with manager_agent.run_stream(prompt, deps=deps, message_history=message_history) as result:
+                    last_thinking_len = 0
+                    last_text_len = 0
+                    thinking_complete = False
+                    full_thinking = ""
 
-                async for response, is_last in result.stream_responses():
-                    # Accumulate thinking and text from all parts
-                    thinking_text = ""
-                    text_text = ""
-                    for part in response.parts:
-                        if isinstance(part, ThinkingPart):
-                            thinking_text += part.content
-                        elif isinstance(part, TextPart):
-                            text_text += part.content
+                    async for response, is_last in result.stream_responses():
+                        # Accumulate thinking and text from all parts
+                        thinking_text = ""
+                        text_text = ""
+                        for part in response.parts:
+                            if isinstance(part, ThinkingPart):
+                                thinking_text += part.content
+                            elif isinstance(part, TextPart):
+                                text_text += part.content
 
-                    # Emit thinking deltas
-                    if len(thinking_text) > last_thinking_len:
-                        new_thinking = thinking_text[last_thinking_len:]
-                        await event_queue.put(AgentThinkingChunk(text=new_thinking))
-                        last_thinking_len = len(thinking_text)
-                        full_thinking = thinking_text
+                        # Emit thinking deltas
+                        if len(thinking_text) > last_thinking_len:
+                            new_thinking = thinking_text[last_thinking_len:]
+                            await event_queue.put(AgentThinkingChunk(text=new_thinking))
+                            last_thinking_len = len(thinking_text)
+                            full_thinking = thinking_text
 
-                    # Signal thinking done when text starts
-                    if text_text and not thinking_complete and last_thinking_len > 0:
+                        # Signal thinking done when text starts
+                        if text_text and not thinking_complete and last_thinking_len > 0:
+                            await event_queue.put(AgentThinkingComplete(full_text=full_thinking))
+                            thinking_complete = True
+
+                        # Emit text deltas
+                        if len(text_text) > last_text_len:
+                            new_text = text_text[last_text_len:]
+                            await event_queue.put(AgentStreamChunk(text=new_text))
+                            last_text_len = len(text_text)
+
+                    # If thinking was emitted but no text followed, still signal complete
+                    if last_thinking_len > 0 and not thinking_complete:
                         await event_queue.put(AgentThinkingComplete(full_text=full_thinking))
-                        thinking_complete = True
 
-                    # Emit text deltas
-                    if len(text_text) > last_text_len:
-                        new_text = text_text[last_text_len:]
-                        await event_queue.put(AgentStreamChunk(text=new_text))
-                        last_text_len = len(text_text)
-
-                # If thinking was emitted but no text followed, still signal complete
-                if last_thinking_len > 0 and not thinking_complete:
-                    await event_queue.put(AgentThinkingComplete(full_text=full_thinking))
-
-                await event_queue.put(AgentComplete(new_history=result.new_messages()))
+                    await event_queue.put(AgentComplete(new_history=result.new_messages()))
         except Exception as e:
             await event_queue.put(AgentStreamChunk(text=f"\n\n**Error:** {e}"))
             await event_queue.put(AgentComplete())
