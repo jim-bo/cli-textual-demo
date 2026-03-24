@@ -44,6 +44,11 @@ def init_observability():
         logger.warning("Langfuse init failed: %s — tracing disabled", e)
 
 
+def is_tracing_enabled() -> bool:
+    """Return whether Langfuse tracing is active."""
+    return _tracing_enabled
+
+
 def trace_context(prompt: str, session_id: str | None = None):
     """Return a Langfuse observation context if tracing is active, else a no-op."""
     if not _tracing_enabled:
