@@ -3,7 +3,7 @@ import os
 import time
 import uuid
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Callable, List, Optional
 
 from textual import on, events
 from textual.app import App, ComposeResult
@@ -48,8 +48,30 @@ class ChatApp(App):
         Binding("ctrl+p", "prev_tab", "Prev Tab", show=False, priority=True),
     ]
 
-    def __init__(self):
-        super().__init__()
+    def __init__(
+        self,
+        tools: Optional[List[Callable]] = None,
+        command_packages: Optional[List[str]] = None,
+        model: Optional[str] = None,
+        safe_mode: Optional[bool] = None,
+        **kwargs,
+    ):
+        # Apply library overrides BEFORE the manager agent is first built.
+        if model is not None:
+            from cli_textual.agents.model import set_model
+            set_model(model)
+        if safe_mode is not None:
+            import cli_textual.agents.manager as _mgr
+            _mgr.SAFE_MODE = safe_mode
+        if tools:
+            from cli_textual.tools.registry import register_tool
+            for t in tools:
+                register_tool(t)
+        if model is not None or safe_mode is not None or tools:
+            from cli_textual.agents.manager import _reset_agent
+            _reset_agent()
+
+        super().__init__(**kwargs)
         init_observability()
         self.session_id = str(uuid.uuid4())
         self.last_ctrl_d_time = 0
@@ -70,6 +92,8 @@ class ChatApp(App):
         
         # Register Commands via Auto-Discovery
         self.command_manager.auto_discover("cli_textual.plugins.commands")
+        for pkg in command_packages or []:
+            self.command_manager.auto_discover(pkg)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -82,8 +106,8 @@ class ChatApp(App):
             with Horizontal(id="status-bar"):
                 yield Label("workspace (/directory)", classes="status-info")
                 yield Label(f"mode: {self.chat_mode}", classes="status-info mode-info")
-                from cli_textual.agents.model import model
-                model_name = getattr(model, "model_name", "test-mock")
+                from cli_textual.agents.model import get_model
+                model_name = getattr(get_model(), "model_name", "test-mock")
                 yield Label(f"model: {model_name}", classes="status-info model-info")
                 trace_label = "[green]● langfuse[/]" if is_tracing_enabled() else "[dim]○ langfuse[/]"
                 yield Label(trace_label, classes="status-info")
