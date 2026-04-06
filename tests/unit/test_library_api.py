@@ -7,6 +7,8 @@ import types
 
 import pytest
 
+pytestmark = pytest.mark.timeout(5)
+
 import cli_textual.agents.manager as mgr
 import cli_textual.agents.model as model_mod
 from cli_textual.core.chat_events import (
@@ -59,6 +61,81 @@ def test_registered_tool_appears_in_built_agent():
     register_tool(echo)
     agent = mgr.get_agent()
     assert "echo" in agent._function_toolset.tools
+
+
+def test_wrapped_tool_preserves_parameter_schema():
+    async def query(sql: str, limit: int = 10) -> ToolResult:
+        """Run a SQL query."""
+        return ToolResult(output=f"{sql}:{limit}")
+
+    register_tool(query)
+    agent = mgr.get_agent()
+    tool = agent._function_toolset.tools["query"]
+    # pydantic-ai derives the JSON schema from the wrapper's signature +
+    # annotations; check that pure_fn's params made it through.
+    schema = tool.function_schema.json_schema
+    assert "sql" in schema["properties"]
+    assert "limit" in schema["properties"]
+    assert schema["properties"]["sql"]["type"] == "string"
+
+
+def test_wrapped_tool_catches_exceptions():
+    async def boom() -> ToolResult:
+        """Explodes."""
+        raise RuntimeError("nope")
+
+    register_tool(boom)
+    agent = mgr.get_agent()
+    tool = agent._function_toolset.tools["boom"]
+
+    queue: asyncio.Queue = asyncio.Queue()
+    deps = ChatDeps(event_queue=queue, input_queue=asyncio.Queue())
+
+    class _Ctx:
+        def __init__(self, deps):
+            self.deps = deps
+
+    asyncio.run(tool.function(_Ctx(deps)))
+    events = []
+    while not queue.empty():
+        events.append(queue.get_nowait())
+    # Start → Output(is_error=True) → End("error") — full lifecycle even on crash
+    assert [type(e) for e in events] == [AgentToolStart, AgentToolOutput, AgentToolEnd]
+    assert events[1].is_error is True
+    assert "RuntimeError" in events[1].content
+    assert events[2].result == "error"
+
+
+def test_register_tool_rejects_sync_function():
+    def not_async(x: str) -> ToolResult:
+        return ToolResult(output=x)
+
+    with pytest.raises(TypeError, match="async"):
+        register_tool(not_async)
+
+
+def test_register_tool_is_idempotent_for_same_fn():
+    async def echo(x: str) -> ToolResult:
+        return ToolResult(output=x)
+
+    register_tool(echo)
+    register_tool(echo)  # no-op, no raise
+    assert get_extra_tools().count(echo) == 1
+
+
+def test_register_tool_rejects_name_collision():
+    async def alpha() -> ToolResult:
+        return ToolResult(output="a")
+
+    alpha.__name__ = "same_name"
+    register_tool(alpha)
+
+    async def beta() -> ToolResult:
+        return ToolResult(output="b")
+
+    beta.__name__ = "same_name"
+    with pytest.raises(ValueError, match="already registered"):
+        register_tool(beta)
 
 
 def test_wrapped_tool_emits_lifecycle_events():

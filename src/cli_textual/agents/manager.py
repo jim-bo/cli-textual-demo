@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import os
 from pathlib import Path
 from typing import Any, AsyncGenerator, List
@@ -22,6 +23,7 @@ from cli_textual.core.chat_events import (
     ChatDeps,
     ChatEvent,
 )
+from cli_textual.tools.base import ToolResult
 from cli_textual.tools.bash import bash_exec as pure_bash_exec
 from cli_textual.tools.read_file import read_file as pure_read_file
 from cli_textual.tools.registry import get_extra_tools
@@ -148,7 +150,16 @@ def _wrap_and_register(agent: Agent, pure_fn) -> None:
 
     async def wrapper(ctx: RunContext[ChatDeps], **kwargs) -> str:
         await ctx.deps.event_queue.put(AgentToolStart(tool_name=name, args=kwargs))
-        result = await pure_fn(**kwargs)
+        try:
+            result = await pure_fn(**kwargs)
+            if not isinstance(result, ToolResult):
+                result = ToolResult(
+                    output=f"tool {name!r} returned {type(result).__name__}, expected ToolResult",
+                    is_error=True,
+                )
+        except Exception as exc:  # noqa: BLE001 — surface any user-tool failure cleanly
+            result = ToolResult(output=f"{type(exc).__name__}: {exc}", is_error=True)
+
         await ctx.deps.event_queue.put(
             AgentToolOutput(tool_name=name, content=result.output, is_error=result.is_error)
         )
@@ -156,8 +167,29 @@ def _wrap_and_register(agent: Agent, pure_fn) -> None:
         await ctx.deps.event_queue.put(AgentToolEnd(tool_name=name, result=status))
         return result.output
 
+    # Expose pure_fn's parameter schema to pydantic-ai by constructing a
+    # synthetic signature: (ctx: RunContext[ChatDeps], *pure_fn_params).
+    # pydantic-ai uses inspect.signature(wrapper) to build the tool's JSON
+    # schema, so without this the LLM would see only ``**kwargs``.
+    original_sig = inspect.signature(pure_fn)
+    ctx_param = inspect.Parameter(
+        "ctx",
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        annotation=RunContext[ChatDeps],
+    )
+    wrapper.__signature__ = original_sig.replace(
+        parameters=[ctx_param, *original_sig.parameters.values()]
+    )
+    # pydantic-ai calls get_type_hints(fn), which reads __annotations__ — not
+    # the synthetic __signature__. Merge the pure function's annotations so
+    # each parameter resolves to its declared type.
+    wrapper.__annotations__ = {
+        "ctx": RunContext[ChatDeps],
+        **getattr(pure_fn, "__annotations__", {}),
+    }
     wrapper.__name__ = name
     wrapper.__doc__ = pure_fn.__doc__
+    wrapper.__wrapped__ = pure_fn
     agent.tool(wrapper)
 
 

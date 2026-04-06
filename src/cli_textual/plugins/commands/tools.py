@@ -4,7 +4,7 @@ from textual.app import ComposeResult
 from textual.widgets import Label, OptionList, Static
 from textual.widget import Widget
 from cli_textual.core.command import SlashCommand
-from cli_textual.agents.manager import manager_agent
+from cli_textual.agents.manager import get_agent
 
 
 def _first_line(text: str) -> str:
@@ -32,7 +32,7 @@ class ToolsWidget(Widget):
 
     def compose(self) -> ComposeResult:
         yield Label("Agent tools  (Enter to inspect, Esc to close)")
-        tools = manager_agent._function_toolset.tools
+        tools = get_agent()._function_toolset.tools
         items = [
             f"{name:<22} {_first_line(tool.description)}"
             for name, tool in tools.items()
@@ -42,7 +42,7 @@ class ToolsWidget(Widget):
     @on(OptionList.OptionSelected, "#tools-option-list")
     def show_detail(self, event: OptionList.OptionSelected) -> None:
         tool_name = str(event.option.prompt).split()[0]
-        tools = manager_agent._function_toolset.tools
+        tools = get_agent()._function_toolset.tools
         tool = tools.get(tool_name)
         description = tool.description if tool else "(no description)"
 
