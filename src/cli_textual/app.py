@@ -301,12 +301,12 @@ class ChatApp(App):
                 status = "error" if event.is_error else "ok"
                 title = f"{event.tool_name} ▸ {status}"
                 coll = Collapsible(
+                    Markdown(event.content or "", classes=style_class),
                     title=title,
                     collapsed=not event.is_error,
                     classes="tool-output-block",
                 )
                 await history.mount(coll)
-                await coll.mount(Markdown(event.content or "", classes=style_class))
                 history.scroll_end(animate=False)
 
             elif isinstance(event, AgentToolEnd):
