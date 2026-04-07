@@ -78,7 +78,7 @@ async def test_thinking_renders_collapsed_by_default():
             await pilot.press(*"hello", "enter")
             await pilot.pause(2.0)
 
-            collapsibles = list(app.query_one("#history-container").query(Collapsible))
+            collapsibles = list(app.query_one("#history-container").query("Collapsible.thinking-block"))
             assert collapsibles, "No Collapsible widget found for thinking"
             assert collapsibles[0].collapsed is True
 
@@ -97,7 +97,7 @@ async def test_verbose_mode_expands_thinking():
             await pilot.press(*"hello", "enter")
             await pilot.pause(2.0)
 
-            collapsibles = list(app.query_one("#history-container").query(Collapsible))
+            collapsibles = list(app.query_one("#history-container").query("Collapsible.thinking-block"))
             assert collapsibles, "No Collapsible widget found"
             assert collapsibles[0].collapsed is False
 
