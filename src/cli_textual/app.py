@@ -28,6 +28,7 @@ from cli_textual.core.chat_events import (
 # Pydantic AI Orchestrators
 from cli_textual.agents.manager import run_manager_pipeline
 from cli_textual.agents.observability import init_observability, is_tracing_enabled
+from cli_textual.core.conversation_log import ConversationLogger, default_log_path
 
 # UI Component Imports
 from cli_textual.ui.widgets.growing_text_area import GrowingTextArea
@@ -54,20 +55,34 @@ class ChatApp(App):
         command_packages: Optional[List[str]] = None,
         model: Optional[str] = None,
         safe_mode: Optional[bool] = None,
+        log: bool = False,
+        log_path: Optional[Path] = None,
+        system_prompt: Optional[str] = None,
+        system_prompt_append: Optional[str] = None,
         **kwargs,
     ):
         # Apply library overrides BEFORE the manager agent is first built.
         if model is not None:
             from cli_textual.agents.model import set_model
             set_model(model)
+        import cli_textual.agents.manager as _mgr
         if safe_mode is not None:
-            import cli_textual.agents.manager as _mgr
             _mgr.SAFE_MODE = safe_mode
+        if system_prompt is not None:
+            _mgr.SYSTEM_PROMPT_OVERRIDE = system_prompt
+        if system_prompt_append is not None:
+            _mgr.SYSTEM_PROMPT_APPEND = system_prompt_append
         if tools:
             from cli_textual.tools.registry import register_tool
             for t in tools:
                 register_tool(t)
-        if model is not None or safe_mode is not None or tools:
+        if (
+            model is not None
+            or safe_mode is not None
+            or tools
+            or system_prompt is not None
+            or system_prompt_append is not None
+        ):
             from cli_textual.agents.manager import _reset_agent
             _reset_agent()
 
@@ -82,6 +97,12 @@ class ChatApp(App):
         self.interactive_input_queue = asyncio.Queue()
         self.verbose_mode = False
         self._agent_waiting_for_input = False
+
+        # Optional append-only JSONL conversation log for debugging.
+        self.conversation_log: Optional[ConversationLogger] = None
+        if log or log_path is not None:
+            target = Path(log_path) if log_path is not None else default_log_path(self.session_id)
+            self.conversation_log = ConversationLogger(target, self.session_id)
 
         
         # Initialize Core Managers
@@ -184,6 +205,12 @@ class ChatApp(App):
     async def handle_submission(self, event: GrowingTextArea.Submitted) -> None:
         user_input = event.text
         self.add_to_history(user_input, is_user=True)
+        if self.conversation_log is not None:
+            if user_input.startswith("/"):
+                parts = user_input.split()
+                self.conversation_log.log_user_command(parts[0], parts[1:])
+            else:
+                self.conversation_log.log_user_message(user_input)
         if user_input.startswith("/"):
             await self.process_command(user_input)
         else:
@@ -215,6 +242,8 @@ class ChatApp(App):
         thinking_text = ""
 
         async for event in generator:
+            if self.conversation_log is not None:
+                self.conversation_log.log_event(event)
             if isinstance(event, AgentThinkingChunk):
                 if not thinking_collapsible:
                     thinking_collapsible = Collapsible(
@@ -383,8 +412,32 @@ class ChatApp(App):
         if time.time() - self.last_ctrl_d_time < 1.0: self.exit()
         else: self.last_ctrl_d_time = time.time(); self.notify("Press Ctrl+D again to exit", timeout=1)
 
+    def on_unmount(self) -> None:
+        if self.conversation_log is not None:
+            self.conversation_log.close()
+
 def main():
-    ChatApp().run()
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="demo-cli", description="cli-textual chat TUI")
+    parser.add_argument(
+        "--log",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Record the full conversation (user input, LLM events, tool calls) "
+            "to a JSONL file. With no argument, writes to "
+            "~/.cli-textual/convos/<utc-timestamp>-<sid>.jsonl. Pass an explicit "
+            "path to override."
+        ),
+    )
+    args = parser.parse_args()
+
+    log_enabled = args.log is not None
+    log_path = Path(args.log) if args.log else None
+    ChatApp(log=log_enabled, log_path=log_path).run()
 
 if __name__ == "__main__":
     main()

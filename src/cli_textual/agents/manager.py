@@ -35,8 +35,19 @@ from cli_textual.tools.web_fetch import web_fetch as pure_web_fetch
 SAFE_MODE = os.getenv("SAFE_MODE", "").lower() in ("1", "true", "yes")
 
 
+# Optional library-consumer overrides for the manager system prompt.
+# Set via ChatApp(system_prompt=..., system_prompt_append=...).
+SYSTEM_PROMPT_OVERRIDE: str | None = None
+SYSTEM_PROMPT_APPEND: str | None = None
+
+
 def _get_system_prompt() -> str:
-    base = PROMPTS['orchestrators']['manager']['system_prompt']
+    if SYSTEM_PROMPT_OVERRIDE is not None:
+        base = SYSTEM_PROMPT_OVERRIDE
+    else:
+        base = PROMPTS['orchestrators']['manager']['system_prompt']
+    if SYSTEM_PROMPT_APPEND:
+        base += "\n\n" + SYSTEM_PROMPT_APPEND
     if SAFE_MODE:
         base += "\n\n" + PROMPTS['orchestrators']['manager']['safety_preamble']
     return base
