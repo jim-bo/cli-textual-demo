@@ -292,8 +292,21 @@ class ChatApp(App):
                 task_label.update(f"Running tool: [bold cyan]{event.tool_name}[/]")
 
             elif isinstance(event, AgentToolOutput):
+                # Render tool output as Markdown inside a collapsed-by-default
+                # Collapsible so the chat stays scannable. Tool results are
+                # often long (tables, file contents, JSON) and the user can
+                # expand them on demand. Errors stay expanded so failures are
+                # visible without a click.
                 style_class = "tool-output-error" if event.is_error else "tool-output"
-                history.mount(Static(event.content, classes=style_class))
+                status = "error" if event.is_error else "ok"
+                title = f"{event.tool_name} ▸ {status}"
+                coll = Collapsible(
+                    title=title,
+                    collapsed=not event.is_error,
+                    classes="tool-output-block",
+                )
+                await history.mount(coll)
+                await coll.mount(Markdown(event.content or "", classes=style_class))
                 history.scroll_end(animate=False)
 
             elif isinstance(event, AgentToolEnd):
