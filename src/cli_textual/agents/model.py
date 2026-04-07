@@ -10,11 +10,22 @@ load_dotenv()
 
 KNOWN_PROVIDER_PREFIXES = {"anthropic", "openai", "gemini", "google"}
 
+_override_model = None
 
-def get_model():
-    """Dynamically select model based on environment variables."""
-    model_name = os.getenv("PYDANTIC_AI_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
 
+def set_model(model_or_str):
+    """Override the model used by the manager agent.
+
+    Accepts either a pydantic-ai model instance or a provider-prefixed
+    string (e.g. ``"anthropic:claude-sonnet-4-6"``, ``"test"``). Must be
+    called before the agent is built. Pass ``None`` to clear the override.
+    """
+    global _override_model
+    _override_model = model_or_str
+
+
+def _resolve_string(model_name: str):
+    """Resolve a model name string to a pydantic-ai model instance."""
     if model_name.lower() == "test":
         return TestModel()
 
@@ -34,11 +45,10 @@ def get_model():
             model_name,
             provider=OpenAIProvider(
                 base_url="https://openrouter.ai/api/v1",
-                api_key=openrouter_key
-            )
+                api_key=openrouter_key,
+            ),
         )
 
-    # Native providers
     if provider == "anthropic":
         return AnthropicModel(name)
     if provider in ("gemini", "google"):
@@ -48,4 +58,15 @@ def get_model():
     return OpenAIChatModel(name if provider else model_name)
 
 
-model = get_model()
+def get_model():
+    """Return the model instance to use for the manager agent.
+
+    Precedence: explicit override via :func:`set_model` > env-var resolution.
+    """
+    if _override_model is not None:
+        if isinstance(_override_model, str):
+            return _resolve_string(_override_model)
+        return _override_model
+
+    model_name = os.getenv("PYDANTIC_AI_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
+    return _resolve_string(model_name)

@@ -1,21 +1,33 @@
 import asyncio
+import inspect
 import os
-from typing import AsyncGenerator, List, Any
-from pydantic_ai import Agent, RunContext
-
-from pydantic_ai.messages import ThinkingPart, TextPart
-
-from cli_textual.core.chat_events import (
-    ChatEvent, AgentThinking, AgentToolStart, AgentToolEnd, AgentToolOutput,
-    AgentStreamChunk, AgentComplete, AgentRequiresUserInput, ChatDeps, AgentExecuteCommand,
-    AgentThinkingChunk, AgentThinkingComplete,
-)
 from pathlib import Path
-from cli_textual.agents.model import model
+from typing import Any, AsyncGenerator, List
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.messages import TextPart, ThinkingPart
+
+from cli_textual.agents.model import get_model
+from cli_textual.agents.prompt_loader import PROMPTS
+from cli_textual.core.chat_events import (
+    AgentComplete,
+    AgentExecuteCommand,
+    AgentRequiresUserInput,
+    AgentStreamChunk,
+    AgentThinking,
+    AgentThinkingChunk,
+    AgentThinkingComplete,
+    AgentToolEnd,
+    AgentToolOutput,
+    AgentToolStart,
+    ChatDeps,
+    ChatEvent,
+)
+from cli_textual.tools.base import ToolResult
 from cli_textual.tools.bash import bash_exec as pure_bash_exec
 from cli_textual.tools.read_file import read_file as pure_read_file
+from cli_textual.tools.registry import get_extra_tools
 from cli_textual.tools.web_fetch import web_fetch as pure_web_fetch
-from cli_textual.agents.prompt_loader import PROMPTS
 
 # ---------------------------------------------------------------------------
 # Safe Mode
@@ -31,21 +43,9 @@ def _get_system_prompt() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Manager Orchestration
-# A router agent that delegates to sub-agents as tools
-# ---------------------------------------------------------------------------
-manager_agent = Agent(
-    model,
-    deps_type=ChatDeps,
-    system_prompt=_get_system_prompt(),
-)
-
-
-# ---------------------------------------------------------------------------
-# Tool wrappers (module-level for testability)
+# Built-in tool wrappers (pure logic in cli_textual/tools/)
 # ---------------------------------------------------------------------------
 
-@manager_agent.tool
 async def ask_user_to_select(ctx: RunContext[ChatDeps], prompt: str, options: List[str]) -> str:
     """Show a selection menu in the TUI and WAIT for the user's choice before continuing.
 
@@ -69,7 +69,6 @@ async def ask_user_to_select(ctx: RunContext[ChatDeps], prompt: str, options: Li
     return response
 
 
-@manager_agent.tool
 async def execute_slash_command(ctx: RunContext[ChatDeps], command_name: str, args: List[str] | None = None) -> str:
     """Execute a TUI slash command (e.g. '/clear', '/ls').
     Use this to trigger UI actions or system tools.
@@ -82,7 +81,6 @@ async def execute_slash_command(ctx: RunContext[ChatDeps], command_name: str, ar
     return f"Command {command_name} triggered in UI."
 
 
-@manager_agent.tool
 async def read_file(ctx: RunContext[ChatDeps], path: str, start_line: int = 1, end_line: int | None = None) -> str:
     """Read the contents of a local file, optionally restricted to a line range.
 
@@ -99,7 +97,6 @@ async def read_file(ctx: RunContext[ChatDeps], path: str, start_line: int = 1, e
     return result.output
 
 
-@manager_agent.tool
 async def web_fetch(ctx: RunContext[ChatDeps], url: str) -> str:
     """Fetch the contents of a URL via HTTP GET and return the response body.
 
@@ -136,9 +133,119 @@ async def bash_exec(ctx: RunContext[ChatDeps], command: str, working_dir: str = 
     return result.output
 
 
-# Register bash_exec only when not in safe mode
-if not SAFE_MODE:
-    manager_agent.tool(bash_exec)
+# ---------------------------------------------------------------------------
+# Extra-tool adapter: wraps a pure ToolResult function into a pydantic-ai tool
+# ---------------------------------------------------------------------------
+
+def _wrap_and_register(agent: Agent, pure_fn) -> None:
+    """Generate a pydantic-ai tool wrapper for a pure ``ToolResult`` function.
+
+    The wrapper emits the standard ``AgentToolStart`` → ``AgentToolOutput`` →
+    ``AgentToolEnd`` lifecycle so third-party tools render identically to
+    built-ins. ``pure_fn`` must be an ``async`` function returning a
+    ``ToolResult``; its ``__name__`` and ``__doc__`` become the tool name and
+    description seen by the LLM.
+    """
+    name = pure_fn.__name__
+
+    async def wrapper(ctx: RunContext[ChatDeps], **kwargs) -> str:
+        await ctx.deps.event_queue.put(AgentToolStart(tool_name=name, args=kwargs))
+        try:
+            result = await pure_fn(**kwargs)
+            if not isinstance(result, ToolResult):
+                result = ToolResult(
+                    output=f"tool {name!r} returned {type(result).__name__}, expected ToolResult",
+                    is_error=True,
+                )
+        except Exception as exc:  # noqa: BLE001 — surface any user-tool failure cleanly
+            result = ToolResult(output=f"{type(exc).__name__}: {exc}", is_error=True)
+
+        await ctx.deps.event_queue.put(
+            AgentToolOutput(tool_name=name, content=result.output, is_error=result.is_error)
+        )
+        status = "error" if result.is_error else "ok"
+        await ctx.deps.event_queue.put(AgentToolEnd(tool_name=name, result=status))
+        return result.output
+
+    # Expose pure_fn's parameter schema to pydantic-ai by constructing a
+    # synthetic signature: (ctx: RunContext[ChatDeps], *pure_fn_params).
+    # pydantic-ai uses inspect.signature(wrapper) to build the tool's JSON
+    # schema, so without this the LLM would see only ``**kwargs``.
+    original_sig = inspect.signature(pure_fn)
+    ctx_param = inspect.Parameter(
+        "ctx",
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        annotation=RunContext[ChatDeps],
+    )
+    wrapper.__signature__ = original_sig.replace(
+        parameters=[ctx_param, *original_sig.parameters.values()]
+    )
+    # pydantic-ai calls get_type_hints(fn), which reads __annotations__ — not
+    # the synthetic __signature__. Merge the pure function's annotations so
+    # each parameter resolves to its declared type.
+    wrapper.__annotations__ = {
+        "ctx": RunContext[ChatDeps],
+        **getattr(pure_fn, "__annotations__", {}),
+    }
+    wrapper.__name__ = name
+    wrapper.__doc__ = pure_fn.__doc__
+    wrapper.__wrapped__ = pure_fn
+    agent.tool(wrapper)
+
+
+# ---------------------------------------------------------------------------
+# Lazy agent singleton
+# ---------------------------------------------------------------------------
+_agent_instance: Agent | None = None
+
+
+def _build_agent() -> Agent:
+    agent = Agent(
+        get_model(),
+        deps_type=ChatDeps,
+        system_prompt=_get_system_prompt(),
+    )
+
+    # Built-in tools
+    agent.tool(ask_user_to_select)
+    agent.tool(execute_slash_command)
+    agent.tool(read_file)
+    agent.tool(web_fetch)
+    if not SAFE_MODE:
+        agent.tool(bash_exec)
+
+    # User-registered tools
+    for fn in get_extra_tools():
+        _wrap_and_register(agent, fn)
+
+    return agent
+
+
+def get_agent() -> Agent:
+    """Return the lazily-constructed manager agent singleton."""
+    global _agent_instance
+    if _agent_instance is None:
+        _agent_instance = _build_agent()
+    return _agent_instance
+
+
+def _reset_agent() -> None:
+    """Drop the cached singleton so the next ``get_agent()`` rebuilds it.
+
+    Intended for tests and for ``ChatApp.__init__`` when overrides arrive
+    after an earlier build.
+    """
+    global _agent_instance
+    _agent_instance = None
+
+
+def __getattr__(attr: str):
+    """PEP 562 shim: ``from cli_textual.agents.manager import manager_agent``
+    still works, but the agent is only built on first access.
+    """
+    if attr == "manager_agent":
+        return get_agent()
+    raise AttributeError(f"module {__name__!r} has no attribute {attr!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +267,7 @@ async def run_manager_pipeline(
         try:
             from cli_textual.agents.observability import trace_context
             with trace_context(prompt, session_id):
-                async with manager_agent.run_stream(prompt, deps=deps, message_history=message_history) as result:
+                async with get_agent().run_stream(prompt, deps=deps, message_history=message_history) as result:
                     last_thinking_len = 0
                     last_text_len = 0
                     thinking_complete = False
