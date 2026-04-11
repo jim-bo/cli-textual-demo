@@ -39,7 +39,11 @@ from cli_textual.ui.widgets.landing_page import LandingPage
 class ChatApp(App):
     """Refactored ChatApp using modular architecture."""
 
-    CSS_PATH = "app.tcss"
+    # Absolute path so subclasses defined in other packages inherit the
+    # correct stylesheet location. Textual resolves a relative ``CSS_PATH``
+    # against the subclass's own module file, which would break any
+    # third-party ``ChatApp`` subclass.
+    CSS_PATH = str(Path(__file__).parent / "app.tcss")
 
     BINDINGS = [
         Binding("ctrl+c", "quit", "Quit", show=False),
@@ -49,10 +53,18 @@ class ChatApp(App):
         Binding("ctrl+p", "prev_tab", "Prev Tab", show=False, priority=True),
     ]
 
+    # Landing-page widget class mounted by ``on_mount``. Subclasses can
+    # override this class attribute to swap in their own branded widget
+    # without having to override ``on_mount`` (which Textual dispatches
+    # to every class in the MRO, so an override alone would leave the
+    # default landing page mounted alongside the custom one).
+    LANDING_WIDGET_CLS: type = LandingPage
+
     def __init__(
         self,
         tools: Optional[List[Callable]] = None,
         command_packages: Optional[List[str]] = None,
+        command_filter: Optional[Callable[[str], bool]] = None,
         model: Optional[str] = None,
         safe_mode: Optional[bool] = None,
         log: bool = False,
@@ -116,6 +128,17 @@ class ChatApp(App):
         for pkg in command_packages or []:
             self.command_manager.auto_discover(pkg)
 
+        # Optional post-discovery filter. Lets callers restrict the active
+        # command set (for example, to a read-only allowlist in a sandboxed
+        # deployment) without having to mutate ``command_manager.commands``
+        # after the fact.
+        if command_filter is not None:
+            self.command_manager.commands = {
+                name: cmd
+                for name, cmd in self.command_manager.commands.items()
+                if command_filter(name)
+            }
+
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         yield VerticalScroll(id="history-container")
@@ -135,10 +158,10 @@ class ChatApp(App):
             yield Label(str(self.workspace_root), classes="path-info")
         yield Footer()
 
-    def on_mount(self) -> None: 
+    def on_mount(self) -> None:
         self.query_one("#main-input").focus()
         history = self.query_one("#history-container")
-        history.mount(LandingPage())
+        history.mount(self.LANDING_WIDGET_CLS())
 
 
     @on(OptionList.OptionSelected, "#mode-select-list")
