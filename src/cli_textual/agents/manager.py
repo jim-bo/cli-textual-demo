@@ -260,25 +260,34 @@ def __getattr__(attr: str):
 
 
 # ---------------------------------------------------------------------------
-# Manager Pipeline Wrapper
+# Generic streaming pipeline
 # ---------------------------------------------------------------------------
-async def run_manager_pipeline(
+async def run_pipeline(
+    agent: Agent,
     prompt: str,
     input_queue: asyncio.Queue,
     message_history: List[Any] | None = None,
     session_id: str | None = None,
 ) -> AsyncGenerator[ChatEvent, None]:
-    """Execute the manager orchestration using queues for UI bridging."""
+    """Stream ``ChatEvent``s from a single ``pydantic_ai.Agent`` run.
+
+    The caller supplies the agent so multi-module orchestrations
+    (Planner / Analyst / Librarian / Conductor …) can drive
+    role-specialized agents through the same event-streaming machinery
+    that powers the manager singleton. The ``input_queue`` is read by
+    tools that pause for user input (e.g. ``ask_user_to_select``);
+    yielded events follow the contract in ``cli_textual.core.chat_events``.
+    """
     event_queue = asyncio.Queue()
     deps = ChatDeps(event_queue=event_queue, input_queue=input_queue)
 
-    await event_queue.put(AgentThinking(message="Manager orchestrator initializing..."))
+    await event_queue.put(AgentThinking(message="Agent initializing..."))
 
     async def run_agent():
         try:
             from cli_textual.agents.observability import trace_context
             with trace_context(prompt, session_id):
-                async with get_agent().run_stream(prompt, deps=deps, message_history=message_history) as result:
+                async with agent.run_stream(prompt, deps=deps, message_history=message_history) as result:
                     last_thinking_len = 0
                     last_text_len = 0
                     thinking_complete = False
@@ -324,9 +333,33 @@ async def run_manager_pipeline(
     # Run the agent in the background
     task = asyncio.create_task(run_agent())
 
-    # Yield events to the TUI as they come in
+    # Yield events to the consumer as they come in
     while True:
         event = await event_queue.get()
         yield event
         if isinstance(event, AgentComplete):
             break
+
+
+# ---------------------------------------------------------------------------
+# Manager Pipeline Wrapper
+# ---------------------------------------------------------------------------
+async def run_manager_pipeline(
+    prompt: str,
+    input_queue: asyncio.Queue,
+    message_history: List[Any] | None = None,
+    session_id: str | None = None,
+) -> AsyncGenerator[ChatEvent, None]:
+    """Execute the manager orchestration using queues for UI bridging.
+
+    Thin wrapper around :func:`run_pipeline` that drives the lazy
+    manager-agent singleton. Kept for backwards compatibility.
+    """
+    async for event in run_pipeline(
+        get_agent(),
+        prompt,
+        input_queue,
+        message_history=message_history,
+        session_id=session_id,
+    ):
+        yield event
