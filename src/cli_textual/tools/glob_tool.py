@@ -35,10 +35,18 @@ async def glob(
     if not base.exists():
         return ToolResult(output=f"Error: path not found: {path}", is_error=True)
 
-    hits = [
-        p for p in base.glob(pattern)
-        if p.is_file() and not any(part in _SKIP_DIRS for part in p.relative_to(base).parts)
-    ]
+    hits = []
+    for p in base.glob(pattern):
+        if not p.is_file():
+            continue
+        rp = p.resolve()
+        # Glob patterns may contain `..`, which pathlib treats as a literal
+        # segment — re-jail every match so a pattern can't escape the workspace.
+        if rp != workspace and workspace not in rp.parents:
+            continue
+        if any(part in _SKIP_DIRS for part in rp.relative_to(workspace).parts):
+            continue
+        hits.append(rp)
     try:
         hits.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     except OSError:

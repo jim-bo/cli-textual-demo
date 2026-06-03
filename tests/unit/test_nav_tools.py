@@ -94,6 +94,18 @@ async def test_glob_jailed(tmp_path):
     assert "outside workspace" in r.output
 
 
+@pytest.mark.asyncio
+async def test_glob_pattern_cannot_escape_via_dotdot(tmp_path):
+    """A `..` in the PATTERN must not leak files outside the workspace."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "inside.py").write_text("x\n")
+    (tmp_path / "secret.py").write_text("secret\n")  # sibling, outside ws
+    r = await glob("../*.py", path=".", workspace_root=ws)
+    assert not r.is_error              # no crash
+    assert "secret.py" not in r.output  # not leaked
+
+
 # --- todo_write ------------------------------------------------------------
 
 @pytest.mark.asyncio
