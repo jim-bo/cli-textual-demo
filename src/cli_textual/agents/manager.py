@@ -26,8 +26,11 @@ from cli_textual.core.chat_events import (
 from cli_textual.tools.base import ToolResult
 from cli_textual.tools.bash import bash_exec as pure_bash_exec
 from cli_textual.tools.edit_file import edit_file as pure_edit_file
+from cli_textual.tools.glob_tool import glob as pure_glob
+from cli_textual.tools.grep import grep as pure_grep
 from cli_textual.tools.read_file import read_file as pure_read_file
 from cli_textual.tools.registry import get_extra_tools
+from cli_textual.tools.todo_write import todo_write as pure_todo_write
 from cli_textual.tools.web_fetch import web_fetch as pure_web_fetch
 from cli_textual.tools.write_file import write_file as pure_write_file
 
@@ -194,6 +197,65 @@ async def edit_file(
     return result.output
 
 
+async def grep(
+    ctx: RunContext[ChatDeps],
+    pattern: str,
+    path: str = ".",
+    ignore_case: bool = False,
+    max_results: int = 100,
+) -> str:
+    """Search file contents for a regular expression (returns ``file:line: text``).
+
+    Recursively searches under ``path``, skipping VCS/build dirs and binary
+    files. Prefer this over running ``grep`` through the shell — it returns
+    clean, capped output.
+
+    Args:
+        pattern: Regular expression to search for
+        path: File or directory to search under (default: current directory)
+        ignore_case: Case-insensitive match when True
+        max_results: Stop after this many matching lines (default 100)
+    """
+    await ctx.deps.event_queue.put(AgentToolStart(tool_name="grep", args={"pattern": pattern, "path": path}))
+    result = await pure_grep(pattern, path, ignore_case=ignore_case, max_results=max_results, workspace_root=Path.cwd())
+    await ctx.deps.event_queue.put(AgentToolOutput(tool_name="grep", content=result.output, is_error=result.is_error))
+    await ctx.deps.event_queue.put(AgentToolEnd(tool_name="grep", result="error" if result.is_error else "ok"))
+    return result.output
+
+
+async def glob(ctx: RunContext[ChatDeps], pattern: str, path: str = ".", max_results: int = 100) -> str:
+    """Find files matching a glob pattern (supports ``**``); newest first.
+
+    Prefer this over running ``find`` through the shell.
+
+    Args:
+        pattern: Glob pattern, e.g. ``**/*.py`` or ``src/**/test_*.py``
+        path: Directory to search under (default: current directory)
+        max_results: Cap on number of paths returned (default 100)
+    """
+    await ctx.deps.event_queue.put(AgentToolStart(tool_name="glob", args={"pattern": pattern, "path": path}))
+    result = await pure_glob(pattern, path, max_results=max_results, workspace_root=Path.cwd())
+    await ctx.deps.event_queue.put(AgentToolOutput(tool_name="glob", content=result.output, is_error=result.is_error))
+    await ctx.deps.event_queue.put(AgentToolEnd(tool_name="glob", result="error" if result.is_error else "ok"))
+    return result.output
+
+
+async def todo_write(ctx: RunContext[ChatDeps], todos: list[dict[str, str]]) -> str:
+    """Record/replace your todo list and render it as a checklist.
+
+    Pass the FULL list every call (it replaces the previous one). Use this to
+    plan a multi-step task and track progress as you work.
+
+    Args:
+        todos: list of ``{"content": <str>, "status": <pending|in_progress|completed>}``
+    """
+    await ctx.deps.event_queue.put(AgentToolStart(tool_name="todo_write", args={"count": len(todos) if isinstance(todos, list) else 0}))
+    result = await pure_todo_write(todos)
+    await ctx.deps.event_queue.put(AgentToolOutput(tool_name="todo_write", content=result.output, is_error=result.is_error))
+    await ctx.deps.event_queue.put(AgentToolEnd(tool_name="todo_write", result="error" if result.is_error else "ok"))
+    return result.output
+
+
 # ---------------------------------------------------------------------------
 # Extra-tool adapter: wraps a pure ToolResult function into a pydantic-ai tool
 # ---------------------------------------------------------------------------
@@ -265,6 +327,9 @@ _BUILTIN_TOOLS = {
     "bash_exec": bash_exec,
     "write_file": write_file,
     "edit_file": edit_file,
+    "grep": grep,
+    "glob": glob,
+    "todo_write": todo_write,
 }
 
 # Tools that mutate the local filesystem (or shell out) — disabled in SAFE_MODE
