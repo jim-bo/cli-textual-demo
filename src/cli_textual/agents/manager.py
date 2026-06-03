@@ -39,6 +39,11 @@ from cli_textual.tools.write_file import write_file as pure_write_file
 # ---------------------------------------------------------------------------
 SAFE_MODE = os.getenv("SAFE_MODE", "").lower() in ("1", "true", "yes")
 
+# Agentic step budget: max model requests in one pipeline run. pydantic-ai's
+# default is 50, too low for long iterate-against-tests coding runs; default
+# higher and allow override via env / the run_pipeline arg.
+REQUEST_LIMIT = int(os.getenv("CLI_TEXTUAL_REQUEST_LIMIT", "100"))
+
 
 # Optional library-consumer overrides for the manager system prompt.
 # Set via ChatApp(system_prompt=..., system_prompt_append=...).
@@ -436,6 +441,7 @@ async def run_pipeline(
     input_queue: asyncio.Queue,
     message_history: List[Any] | None = None,
     session_id: str | None = None,
+    request_limit: int | None = None,
 ) -> AsyncGenerator[ChatEvent, None]:
     """Stream ``ChatEvent``s from a single ``pydantic_ai.Agent`` run.
 
@@ -445,7 +451,14 @@ async def run_pipeline(
     that powers the manager singleton. The ``input_queue`` is read by
     tools that pause for user input (e.g. ``ask_user_to_select``);
     yielded events follow the contract in ``cli_textual.core.chat_events``.
+
+    ``request_limit`` caps the number of model requests in one run (the
+    agentic step budget). When ``None``, falls back to ``REQUEST_LIMIT`` (env
+    ``CLI_TEXTUAL_REQUEST_LIMIT``, default 100). pydantic-ai's own default is
+    only 50, which is too low for long iterate-against-tests coding runs.
     """
+    if request_limit is None:
+        request_limit = REQUEST_LIMIT
     event_queue = asyncio.Queue()
     deps = ChatDeps(event_queue=event_queue, input_queue=input_queue)
 
@@ -488,11 +501,13 @@ async def run_pipeline(
                 TextPartDelta,
                 ThinkingPartDelta,
             )
+            from pydantic_ai.usage import UsageLimits
 
             final_result = None
             with trace_context(prompt, session_id):
                 async for ev in agent.run_stream_events(
-                    prompt, deps=deps, message_history=message_history
+                    prompt, deps=deps, message_history=message_history,
+                    usage_limits=UsageLimits(request_limit=request_limit),
                 ):
                     if isinstance(ev, PartStartEvent):
                         part = ev.part
@@ -538,6 +553,7 @@ async def run_manager_pipeline(
     input_queue: asyncio.Queue,
     message_history: List[Any] | None = None,
     session_id: str | None = None,
+    request_limit: int | None = None,
 ) -> AsyncGenerator[ChatEvent, None]:
     """Execute the manager orchestration using queues for UI bridging.
 
@@ -550,5 +566,6 @@ async def run_manager_pipeline(
         input_queue,
         message_history=message_history,
         session_id=session_id,
+        request_limit=request_limit,
     ):
         yield event
