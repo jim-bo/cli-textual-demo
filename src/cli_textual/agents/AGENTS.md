@@ -12,5 +12,6 @@
 - Pipeline uses `stream_responses()` (not `stream_text()`) to capture both thinking and text tokens.
 - Tool wrappers delegate to pure functions in `tools/` and emit events to `event_queue`.
 - `ChatDeps` (from `core/chat_events.py`) carries `event_queue` and `input_queue` as agent dependencies.
-- To add a new tool: write the pure function in `tools/`, then add a `@manager_agent.tool` wrapper here that emits `AgentToolStart` → delegates → `AgentToolOutput` → `AgentToolEnd`.
-- **Safe mode** (`SAFE_MODE=1` env var): disables `bash_exec` tool and appends `safety_preamble` from `prompts.yaml` to the system prompt. Set in Dockerfile for public hosting.
+- To add a new tool: write the pure function in `tools/`, add an event-emitting wrapper here (`AgentToolStart` → delegate → `AgentToolOutput` → `AgentToolEnd`), and register it by name in `_BUILTIN_TOOLS` (add to `_UNSAFE_TOOLS` too if it mutates the filesystem or shells out). `build_agent()` attaches everything in `_BUILTIN_TOOLS`.
+- **Safe mode** (`SAFE_MODE=1` env var): disables the filesystem-mutating tools (`_UNSAFE_TOOLS` = `bash_exec`, `write_file`, `edit_file`) and appends `safety_preamble` from `prompts.yaml` to the system prompt. Set in Dockerfile for public hosting.
+- Built-in tools live in `_BUILTIN_TOOLS`; `write_file`/`edit_file` give the agent file-authoring/editing (`edit_file` uses the forgiving matcher in `tools/_editblock.py`).

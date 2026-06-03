@@ -8,6 +8,8 @@ import pytest
 from cli_textual.tools.read_file import read_file
 from cli_textual.tools.web_fetch import web_fetch, _is_url_safe
 
+pytestmark = pytest.mark.timeout(5)
+
 
 # ---------------------------------------------------------------------------
 # read_file — path jailing
@@ -114,17 +116,23 @@ def _reload_manager():
     importlib.reload(mgr)
 
 
-def test_safe_mode_excludes_bash(monkeypatch, _reload_manager):
+def test_safe_mode_excludes_filesystem_mutating_tools(monkeypatch, _reload_manager):
     mgr = _reload_manager
     monkeypatch.setenv("SAFE_MODE", "1")
     importlib.reload(mgr)
     tool_names = [name for name in mgr.manager_agent._function_toolset.tools]
     assert "bash_exec" not in tool_names
+    assert "write_file" not in tool_names
+    assert "edit_file" not in tool_names
+    # Read-only tools stay available.
+    assert "read_file" in tool_names
 
 
-def test_normal_mode_includes_bash(monkeypatch, _reload_manager):
+def test_normal_mode_includes_filesystem_mutating_tools(monkeypatch, _reload_manager):
     mgr = _reload_manager
     monkeypatch.delenv("SAFE_MODE", raising=False)
     importlib.reload(mgr)
     tool_names = [name for name in mgr.manager_agent._function_toolset.tools]
     assert "bash_exec" in tool_names
+    assert "write_file" in tool_names
+    assert "edit_file" in tool_names
