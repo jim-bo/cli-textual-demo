@@ -10,5 +10,6 @@ src/cli_textual/tools/_editblock.py (replace_most_similar_chunk,
 try_dotdotdots, replace_part_with_missing_leading_whitespace, and helpers)
 are ported and lightly adapted from aider/coders/editblock_coder.py.
 
-A copy of the Apache License, Version 2.0 may be obtained at:
+The full text of the Apache License, Version 2.0 is included in the
+LICENSE-APACHE file at the root of this repository, and is also available at:
 https://www.apache.org/licenses/LICENSE-2.0

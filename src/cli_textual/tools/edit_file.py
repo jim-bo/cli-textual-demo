@@ -34,11 +34,21 @@ async def edit_file(
     except PermissionError as exc:
         return ToolResult(output=f"Error: {exc}", is_error=True)
 
+    if old_string == "":
+        return ToolResult(
+            output="Error: old_string must not be empty (use write_file to create/replace a file)",
+            is_error=True,
+        )
+
     if not file_path.exists():
         return ToolResult(output=f"Error: file not found: {path}", is_error=True)
 
     try:
-        content = file_path.read_text(encoding="utf-8", errors="replace")
+        # Strict decode: silently round-tripping a non-UTF-8 file with
+        # errors="replace" would corrupt its bytes on write.
+        content = file_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return ToolResult(output=f"Error: {path} is not valid UTF-8 text", is_error=True)
     except Exception as exc:
         return ToolResult(output=f"Error reading file: {exc}", is_error=True)
 

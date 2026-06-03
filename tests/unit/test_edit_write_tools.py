@@ -9,6 +9,8 @@ import asyncio
 import pytest
 from unittest.mock import MagicMock
 
+pytestmark = pytest.mark.timeout(5)
+
 from cli_textual.agents.manager import edit_file as edit_file_wrapper
 from cli_textual.agents.manager import write_file as write_file_wrapper
 from cli_textual.core.chat_events import (
@@ -137,6 +139,26 @@ async def test_edit_file_identical_strings_errors(tmp_path):
     result = await edit_file("m.py", "a = 1", "a = 1", workspace_root=tmp_path)
     assert result.is_error
     assert "identical" in result.output
+
+
+@pytest.mark.asyncio
+async def test_edit_file_empty_old_string_errors(tmp_path):
+    f = tmp_path / "m.py"
+    f.write_text("a = 1\n")
+    result = await edit_file("m.py", "", "x", workspace_root=tmp_path)
+    assert result.is_error
+    assert "empty" in result.output
+    assert f.read_text() == "a = 1\n"  # unchanged
+
+
+@pytest.mark.asyncio
+async def test_edit_file_non_utf8_errors(tmp_path):
+    f = tmp_path / "bin.dat"
+    f.write_bytes(b"\xff\xfe\x00bad bytes")
+    result = await edit_file("bin.dat", "bad", "good", workspace_root=tmp_path)
+    assert result.is_error
+    assert "UTF-8" in result.output
+    assert f.read_bytes() == b"\xff\xfe\x00bad bytes"  # untouched
 
 
 @pytest.mark.asyncio

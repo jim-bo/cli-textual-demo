@@ -61,6 +61,12 @@ def match_but_for_leading_whitespace(whole_lines, part_lines):
 def replace_part_with_missing_leading_whitespace(whole_lines, part_lines, replace_lines):
     # Models often mess up leading whitespace, usually uniformly across the
     # old and new blocks — omitting all of it, or only some.
+    #
+    # Known limitation: this returns the FIRST indentation-tolerant match rather
+    # than detecting multiple ambiguous matches. It's reached only as a fallback
+    # in edit_file when exact matching already found zero hits (the exact-match
+    # uniqueness guard runs first), and it mirrors Aider's upstream behavior.
+    # Tightening it to surface "multiple forgiving matches" is a future enhancement.
 
     # Outdent everything by the max fixed amount possible.
     leading = [len(p) - len(p.lstrip()) for p in part_lines if p.strip()] + [

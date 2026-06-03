@@ -8,6 +8,8 @@ import pytest
 from cli_textual.tools.read_file import read_file
 from cli_textual.tools.web_fetch import web_fetch, _is_url_safe
 
+pytestmark = pytest.mark.timeout(5)
+
 
 # ---------------------------------------------------------------------------
 # read_file — path jailing
