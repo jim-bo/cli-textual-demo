@@ -42,7 +42,17 @@ SAFE_MODE = os.getenv("SAFE_MODE", "").lower() in ("1", "true", "yes")
 # Agentic step budget: max model requests in one pipeline run. pydantic-ai's
 # default is 50, too low for long iterate-against-tests coding runs; default
 # higher and allow override via env / the run_pipeline arg.
-REQUEST_LIMIT = int(os.getenv("CLI_TEXTUAL_REQUEST_LIMIT", "100"))
+def _env_int(name: str, default: int) -> int:
+    """Read a positive int from the env, falling back to ``default`` on a
+    missing or malformed value (so a bad var can't crash import)."""
+    try:
+        value = int(os.getenv(name, ""))
+        return value if value > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+REQUEST_LIMIT = _env_int("CLI_TEXTUAL_REQUEST_LIMIT", 100)
 
 
 # Optional library-consumer overrides for the manager system prompt.
