@@ -25,9 +25,11 @@ from cli_textual.core.chat_events import (
 )
 from cli_textual.tools.base import ToolResult
 from cli_textual.tools.bash import bash_exec as pure_bash_exec
+from cli_textual.tools.edit_file import edit_file as pure_edit_file
 from cli_textual.tools.read_file import read_file as pure_read_file
 from cli_textual.tools.registry import get_extra_tools
 from cli_textual.tools.web_fetch import web_fetch as pure_web_fetch
+from cli_textual.tools.write_file import write_file as pure_write_file
 
 # ---------------------------------------------------------------------------
 # Safe Mode
@@ -144,6 +146,54 @@ async def bash_exec(ctx: RunContext[ChatDeps], command: str, working_dir: str = 
     return result.output
 
 
+async def write_file(ctx: RunContext[ChatDeps], path: str, content: str) -> str:
+    """Create or overwrite a file with the given contents.
+
+    Parent directories are created as needed. Use this to author new files or
+    fully replace an existing one; for a small in-place change, prefer
+    ``edit_file``.
+
+    Args:
+        path: File path (relative to CWD or absolute)
+        content: Full file contents to write
+    """
+    await ctx.deps.event_queue.put(AgentToolStart(tool_name="write_file", args={"path": path}))
+    result = await pure_write_file(path, content, workspace_root=Path.cwd())
+    await ctx.deps.event_queue.put(AgentToolOutput(tool_name="write_file", content=result.output, is_error=result.is_error))
+    status = "error" if result.is_error else "ok"
+    await ctx.deps.event_queue.put(AgentToolEnd(tool_name="write_file", result=status))
+    return result.output
+
+
+async def edit_file(
+    ctx: RunContext[ChatDeps],
+    path: str,
+    old_string: str,
+    new_string: str,
+    replace_all: bool = False,
+) -> str:
+    """Replace an exact string in a file (in-place edit).
+
+    Find ``old_string`` and replace it with ``new_string``. Include enough
+    surrounding context in ``old_string`` to match exactly one location, or set
+    ``replace_all=True`` to replace every occurrence. Pass ``new_string=""`` to
+    delete the matched text. Errors if ``old_string`` is not found, or if it
+    matches multiple times and ``replace_all`` is False.
+
+    Args:
+        path: File path (relative to CWD or absolute)
+        old_string: Exact text to find
+        new_string: Replacement text
+        replace_all: Replace every occurrence instead of requiring a unique match
+    """
+    await ctx.deps.event_queue.put(AgentToolStart(tool_name="edit_file", args={"path": path}))
+    result = await pure_edit_file(path, old_string, new_string, replace_all=replace_all, workspace_root=Path.cwd())
+    await ctx.deps.event_queue.put(AgentToolOutput(tool_name="edit_file", content=result.output, is_error=result.is_error))
+    status = "error" if result.is_error else "ok"
+    await ctx.deps.event_queue.put(AgentToolEnd(tool_name="edit_file", result=status))
+    return result.output
+
+
 # ---------------------------------------------------------------------------
 # Extra-tool adapter: wraps a pure ToolResult function into a pydantic-ai tool
 # ---------------------------------------------------------------------------
@@ -213,7 +263,13 @@ _BUILTIN_TOOLS = {
     "read_file": read_file,
     "web_fetch": web_fetch,
     "bash_exec": bash_exec,
+    "write_file": write_file,
+    "edit_file": edit_file,
 }
+
+# Tools that mutate the local filesystem (or shell out) — disabled in SAFE_MODE
+# so a publicly hosted instance stays read-only.
+_UNSAFE_TOOLS = {"bash_exec", "write_file", "edit_file"}
 
 _agent_instance: Agent | None = None
 
@@ -249,7 +305,7 @@ def build_agent(tools: list[str] | None = None) -> Agent:
             )
 
     def _enabled(name: str) -> bool:
-        if name == "bash_exec" and SAFE_MODE:
+        if name in _UNSAFE_TOOLS and SAFE_MODE:
             return False
         if tools is None:
             return True
