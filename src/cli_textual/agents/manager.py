@@ -205,31 +205,78 @@ def _wrap_and_register(agent: Agent, pure_fn) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Lazy agent singleton
+# Agent factory + lazy singleton
 # ---------------------------------------------------------------------------
+_BUILTIN_TOOLS = {
+    "ask_user_to_select": ask_user_to_select,
+    "execute_slash_command": execute_slash_command,
+    "read_file": read_file,
+    "web_fetch": web_fetch,
+    "bash_exec": bash_exec,
+}
+
 _agent_instance: Agent | None = None
 
 
-def _build_agent() -> Agent:
+def build_agent(tools: list[str] | None = None) -> Agent:
+    """Construct a fresh ``pydantic_ai.Agent``.
+
+    Args:
+        tools: When ``None`` (default), attach every built-in tool
+            (``bash_exec`` is skipped in ``SAFE_MODE``) plus every tool
+            registered via :func:`cli_textual.tools.registry.register_tool`.
+            When a list of names, attach only the named tools — useful
+            for role-specialized agents in multi-module orchestrations.
+            Names are the function's ``__name__`` (the same identity
+            ``register_tool`` uses).
+
+    Returns:
+        A fresh ``Agent``; this never mutates the manager singleton.
+
+    Raises:
+        ValueError: if ``tools`` references a name that matches neither a
+            built-in nor a registered extra tool.
+    """
+    extras = {fn.__name__: fn for fn in get_extra_tools()}
+
+    if tools is not None:
+        known = set(_BUILTIN_TOOLS) | set(extras)
+        unknown = [name for name in tools if name not in known]
+        if unknown:
+            raise ValueError(
+                f"build_agent: unknown tool name(s) {unknown!r}; "
+                f"known tools are {sorted(known)!r}"
+            )
+
+    def _enabled(name: str) -> bool:
+        if name == "bash_exec" and SAFE_MODE:
+            return False
+        if tools is None:
+            return True
+        return name in tools
+
     agent = Agent(
         get_model(),
         deps_type=ChatDeps,
         system_prompt=_get_system_prompt(),
     )
 
-    # Built-in tools
-    agent.tool(ask_user_to_select)
-    agent.tool(execute_slash_command)
-    agent.tool(read_file)
-    agent.tool(web_fetch)
-    if not SAFE_MODE:
-        agent.tool(bash_exec)
+    # Built-in tools (registered directly — they already speak the event protocol)
+    for name, fn in _BUILTIN_TOOLS.items():
+        if _enabled(name):
+            agent.tool(fn)
 
-    # User-registered tools
-    for fn in get_extra_tools():
-        _wrap_and_register(agent, fn)
+    # Extra tools (wrapped to emit the AgentToolStart/Output/End lifecycle)
+    for name, fn in extras.items():
+        if _enabled(name):
+            _wrap_and_register(agent, fn)
 
     return agent
+
+
+def _build_agent() -> Agent:
+    """Back-compat alias used by :func:`get_agent`. Returns an agent with all tools."""
+    return build_agent()
 
 
 def get_agent() -> Agent:
@@ -260,25 +307,34 @@ def __getattr__(attr: str):
 
 
 # ---------------------------------------------------------------------------
-# Manager Pipeline Wrapper
+# Generic streaming pipeline
 # ---------------------------------------------------------------------------
-async def run_manager_pipeline(
+async def run_pipeline(
+    agent: Agent,
     prompt: str,
     input_queue: asyncio.Queue,
     message_history: List[Any] | None = None,
     session_id: str | None = None,
 ) -> AsyncGenerator[ChatEvent, None]:
-    """Execute the manager orchestration using queues for UI bridging."""
+    """Stream ``ChatEvent``s from a single ``pydantic_ai.Agent`` run.
+
+    The caller supplies the agent so multi-module orchestrations
+    (Planner / Analyst / Librarian / Conductor …) can drive
+    role-specialized agents through the same event-streaming machinery
+    that powers the manager singleton. The ``input_queue`` is read by
+    tools that pause for user input (e.g. ``ask_user_to_select``);
+    yielded events follow the contract in ``cli_textual.core.chat_events``.
+    """
     event_queue = asyncio.Queue()
     deps = ChatDeps(event_queue=event_queue, input_queue=input_queue)
 
-    await event_queue.put(AgentThinking(message="Manager orchestrator initializing..."))
+    await event_queue.put(AgentThinking(message="Agent initializing..."))
 
     async def run_agent():
         try:
             from cli_textual.agents.observability import trace_context
             with trace_context(prompt, session_id):
-                async with get_agent().run_stream(prompt, deps=deps, message_history=message_history) as result:
+                async with agent.run_stream(prompt, deps=deps, message_history=message_history) as result:
                     last_thinking_len = 0
                     last_text_len = 0
                     thinking_complete = False
@@ -324,9 +380,33 @@ async def run_manager_pipeline(
     # Run the agent in the background
     task = asyncio.create_task(run_agent())
 
-    # Yield events to the TUI as they come in
+    # Yield events to the consumer as they come in
     while True:
         event = await event_queue.get()
         yield event
         if isinstance(event, AgentComplete):
             break
+
+
+# ---------------------------------------------------------------------------
+# Manager Pipeline Wrapper
+# ---------------------------------------------------------------------------
+async def run_manager_pipeline(
+    prompt: str,
+    input_queue: asyncio.Queue,
+    message_history: List[Any] | None = None,
+    session_id: str | None = None,
+) -> AsyncGenerator[ChatEvent, None]:
+    """Execute the manager orchestration using queues for UI bridging.
+
+    Thin wrapper around :func:`run_pipeline` that drives the lazy
+    manager-agent singleton. Kept for backwards compatibility.
+    """
+    async for event in run_pipeline(
+        get_agent(),
+        prompt,
+        input_queue,
+        message_history=message_history,
+        session_id=session_id,
+    ):
+        yield event
