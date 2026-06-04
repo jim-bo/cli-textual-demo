@@ -143,6 +143,19 @@ GrowingTextArea:focus {
     margin-left: 1;
 }
 
+/* Context-pressure warning: turns the ctx gauge red-ish when low. */
+.low-context {
+    color: #FF6B6B;
+    text-style: bold;
+}
+
+/* "Stopped" affordance shown when a stream is interrupted with Esc. */
+.stopped-msg {
+    color: #888888;
+    text-style: italic;
+    margin: 1 0;
+}
+
 .path-info {
     color: #FFFFFF;
     margin-left: 1;
@@ -236,6 +249,13 @@ DirectoryTree {
     background: #1A0000;
     color: #FF6B6B;
     border-left: solid #FF4444;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+
+.tool-args {
+    background: #11151C;
+    color: #7FB3D5;
     padding: 0 1;
     margin: 0 0 1 0;
 }
