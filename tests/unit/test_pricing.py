@@ -12,6 +12,8 @@ from cli_textual.agents.pricing import (
     estimate_cost,
 )
 
+pytestmark = pytest.mark.timeout(5)
+
 
 @dataclass
 class _Usage:

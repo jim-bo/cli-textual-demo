@@ -79,26 +79,62 @@ async def test_escape_interrupts_running_stream():
     app = ChatApp()
     app.chat_mode = "manager"
 
-    with manager_agent.override(model=FunctionModel(stream_function=stream_fn)):
-        async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press(*"go", "enter")
-            await pilot.pause(0.3)  # let the first chunk stream in
+    try:
+        with manager_agent.override(model=FunctionModel(stream_function=stream_fn)):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.press(*"go", "enter")
+                await pilot.pause(0.3)  # let the first chunk stream in
 
-            await pilot.press("escape")
-            await pilot.pause(0.3)
+                await pilot.press("escape")
+                await pilot.pause(0.3)
 
-            worker = app._agent_worker
-            assert worker is None or not worker.is_running, "worker still running after Esc"
+                worker = app._agent_worker
+                assert worker is None or not worker.is_running, "worker still running after Esc"
 
-            history = app.query_one("#history-container")
-            text = " ".join(
-                str(getattr(w, "_markdown", "")) + str(getattr(w, "renderable", ""))
-                for w in history.query("*")
-            )
-            assert "Stopped" in text, "No Stopped affordance rendered"
-            assert "SHOULD_NOT_APPEAR" not in text, "stream kept going after Esc"
+                history = app.query_one("#history-container")
+                text = " ".join(
+                    str(getattr(w, "_markdown", "")) + str(getattr(w, "renderable", ""))
+                    for w in history.query("*")
+                )
+                assert "Stopped" in text, "No Stopped affordance rendered"
+                assert "SHOULD_NOT_APPEAR" not in text, "stream kept going after Esc"
+    finally:
+        release.set()  # always unblock the mock stream, even if an assert fails
 
-    release.set()  # unblock any lingering coroutine
+
+@pytest.mark.asyncio
+async def test_second_submit_is_refused_while_streaming():
+    """A new prompt submitted mid-stream is refused (not run as a 2nd worker),
+    and the user's text is preserved in the input for resubmission."""
+    release = asyncio.Event()
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo):
+        yield "streaming… "
+        await release.wait()
+        yield "tail"
+
+    app = ChatApp()
+    app.chat_mode = "manager"
+
+    try:
+        with manager_agent.override(model=FunctionModel(stream_function=stream_fn)):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.press(*"first", "enter")
+                await pilot.pause(0.3)
+                first_worker = app._agent_worker
+                assert first_worker is not None and first_worker.is_running
+
+                # Second submit while the first is still streaming.
+                await pilot.press(*"second", "enter")
+                await pilot.pause(0.2)
+
+                # Same worker handle — no new stream was started.
+                assert app._agent_worker is first_worker
+                # The refused text is restored to the input.
+                from cli_textual.ui.widgets.growing_text_area import GrowingTextArea
+                assert app.query_one("#main-input", GrowingTextArea).text == "second"
+    finally:
+        release.set()
 
 
 # ---------------------------------------------------------------------------

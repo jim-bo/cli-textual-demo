@@ -276,6 +276,22 @@ class ChatApp(App):
     @on(GrowingTextArea.Submitted)
     async def handle_submission(self, event: GrowingTextArea.Submitted) -> None:
         user_input = event.text
+        # Refuse a new agent turn while one is still streaming, so we never
+        # orphan a running worker (which would keep emitting output/cost and
+        # leave Esc only able to cancel the newest stream). Commands are still
+        # allowed. The input cleared itself on submit, so restore the text to
+        # let the user resubmit after interrupting with Esc.
+        if (
+            not user_input.startswith("/")
+            and self._agent_worker is not None
+            and self._agent_worker.is_running
+        ):
+            self.notify("A response is still streaming — press Esc to interrupt it first.")
+            main_input = self.query_one("#main-input", GrowingTextArea)
+            main_input.text = user_input
+            main_input.move_cursor((0, len(user_input)))
+            main_input.focus()
+            return
         self.add_to_history(user_input, is_user=True)
         if self.conversation_log is not None:
             if user_input.startswith("/"):

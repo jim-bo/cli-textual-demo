@@ -2,7 +2,11 @@
 
 import json
 
+import pytest
+
 from cli_textual.core.formatting import format_args_block, format_args_inline
+
+pytestmark = pytest.mark.timeout(5)
 
 
 def test_format_args_inline_empty_and_none():
