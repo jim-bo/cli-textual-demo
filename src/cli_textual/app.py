@@ -71,6 +71,9 @@ class ChatApp(App):
         log_path: Optional[Path] = None,
         system_prompt: Optional[str] = None,
         system_prompt_append: Optional[str] = None,
+        mcp_servers: Optional[list] = None,
+        mcp_config: Optional[Path] = None,
+        mcp_discover: Optional[List[str]] = None,
         **kwargs,
     ):
         # Apply library overrides BEFORE the manager agent is first built.
@@ -88,12 +91,19 @@ class ChatApp(App):
             from cli_textual.tools.registry import register_tool
             for t in tools:
                 register_tool(t)
+        # Load MCP servers (from .mcp.json and/or the programmatic list) so the
+        # agent picks them up as toolsets when it is (re)built below.
+        from cli_textual.agents.mcp import load_mcp_servers, set_mcp_servers
+        set_mcp_servers(load_mcp_servers(mcp_config, extra=mcp_servers, discover=mcp_discover))
         if (
             model is not None
             or safe_mode is not None
             or tools
             or system_prompt is not None
             or system_prompt_append is not None
+            or mcp_servers
+            or mcp_config is not None
+            or mcp_discover
         ):
             from cli_textual.agents.manager import _reset_agent
             _reset_agent()
@@ -162,6 +172,34 @@ class ChatApp(App):
         self.query_one("#main-input").focus()
         history = self.query_one("#history-container")
         history.mount(self.LANDING_WIDGET_CLS())
+
+        # Open MCP connections in a single long-lived worker so they enter and
+        # unwind in the same task (avoids anyio cross-task cancel-scope errors).
+        # Pre-connecting keeps stdio subprocesses warm across turns and lets
+        # /mcp list each server's tools; the worker is cancelled at shutdown,
+        # which closes the connections cleanly.
+        from cli_textual.agents.mcp import get_mcp_servers
+        if get_mcp_servers():
+            self.run_worker(self._run_mcp_lifecycle(), group="mcp", exclusive=False)
+
+    async def _run_mcp_lifecycle(self) -> None:
+        """Hold all configured MCP connections open for the app's lifetime."""
+        import contextlib
+
+        from cli_textual.agents.mcp import get_mcp_servers
+
+        async with contextlib.AsyncExitStack() as stack:
+            for server in get_mcp_servers():
+                try:
+                    await stack.enter_async_context(server)
+                except Exception as exc:  # noqa: BLE001 — one bad server must not kill the app
+                    self.add_to_history(
+                        f"⚠️ MCP server {getattr(server, 'id', '?')!r} failed to "
+                        f"connect: {type(exc).__name__}: {exc}"
+                    )
+            # Hold the connections open until the worker is cancelled at shutdown,
+            # at which point the AsyncExitStack unwinds in this same task.
+            await asyncio.Event().wait()
 
 
     @on(OptionList.OptionSelected, "#mode-select-list")

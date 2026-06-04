@@ -7,6 +7,7 @@ from typing import Any, AsyncGenerator, List
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import TextPart, ThinkingPart
 
+from cli_textual.agents.mcp import get_mcp_servers
 from cli_textual.agents.model import get_model
 from cli_textual.agents.prompt_loader import PROMPTS
 from cli_textual.core.chat_events import (
@@ -375,6 +376,12 @@ def build_agent(tools: list[str] | None = None) -> Agent:
     """
     extras = {fn.__name__: fn for fn in get_extra_tools()}
 
+    # MCP servers attach as pydantic-ai toolsets. They are withheld in SAFE_MODE
+    # (a publicly hosted, read-only instance must not gain external tools), and
+    # each server already routes its calls through the event-emitting hook in
+    # agents/mcp.py so its tools render like built-ins.
+    toolsets = [] if SAFE_MODE else get_mcp_servers()
+
     if tools is not None:
         known = set(_BUILTIN_TOOLS) | set(extras)
         unknown = [name for name in tools if name not in known]
@@ -395,6 +402,7 @@ def build_agent(tools: list[str] | None = None) -> Agent:
         get_model(),
         deps_type=ChatDeps,
         system_prompt=_get_system_prompt(),
+        toolsets=toolsets,
     )
 
     # Built-in tools (registered directly — they already speak the event protocol)
