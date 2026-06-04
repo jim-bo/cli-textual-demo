@@ -179,6 +179,21 @@ def test_external_entries_unknown_source_raises():
         external_entries("cursor")
 
 
+def test_mcp_describe_redacts_secrets():
+    from cli_textual.plugins.commands.mcp import _describe
+
+    stdio = MCPServerStdio(command="srv", args=["--token", "sk-abc123"], id="s")
+    out = _describe(stdio)
+    assert "sk-abc123" not in out and "[REDACTED]" in out
+
+    http = MCPServerStreamableHTTP(
+        url="https://user:pw@example.com/mcp?api_key=sk-xyz", id="h"
+    )
+    out = _describe(http)
+    assert "sk-xyz" not in out and "pw" not in out
+    assert "example.com/mcp" in out  # host/path still shown
+
+
 def test_import_to_user_config_writes_then_skips(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
@@ -208,13 +223,10 @@ def test_build_agent_attaches_mcp_toolsets():
     assert "demo" in _toolset_ids(build_agent())
 
 
-def test_safe_mode_withholds_mcp_toolsets():
+def test_safe_mode_withholds_mcp_toolsets(monkeypatch):
     set_mcp_servers([MCPServerStdio(command="true", args=[], id="demo")])
-    mgr.SAFE_MODE = True
-    try:
-        assert "demo" not in _toolset_ids(build_agent())
-    finally:
-        mgr.SAFE_MODE = False
+    monkeypatch.setattr(mgr, "SAFE_MODE", True)
+    assert "demo" not in _toolset_ids(build_agent())
 
 
 # ---------------------------------------------------------------------------

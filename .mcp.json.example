@@ -11,6 +11,11 @@
     "example-remote": {
       "url": "https://example.com/mcp",
       "headers": { "Authorization": "Bearer ${TOKEN}" }
+    },
+    "example-sse": {
+      "type": "sse",
+      "url": "https://example.com/sse",
+      "headers": { "Authorization": "Bearer ${TOKEN}" }
     }
   }
 }

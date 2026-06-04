@@ -2,7 +2,7 @@
 
 ## Layout
 
-- `unit/` — 76 tests, 5s timeout per test. No API keys needed.
+- `unit/` — 77 tests, 5s timeout per test. No API keys needed.
 - `integration/` — requires `OPENROUTER_API_KEY`. Tests real LLM tool use end-to-end.
 
 ## Patterns
