@@ -31,10 +31,13 @@ import cli_textual.agents.manager as mgr  # noqa: E402
 from cli_textual.agents.manager import build_agent, run_pipeline  # noqa: E402
 from cli_textual.agents.mcp import (  # noqa: E402
     _emit_events,
+    external_entries,
     get_mcp_servers,
+    import_to_user_config,
     load_mcp_servers,
     reset_mcp_servers,
     set_mcp_servers,
+    user_config_path,
 )
 from cli_textual.core.chat_events import (  # noqa: E402
     AgentToolEnd,
@@ -44,14 +47,17 @@ from cli_textual.core.chat_events import (  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
-def _reset_mcp():
-    """Isolate the process-wide server list per test.
+def _reset_mcp(tmp_path_factory, monkeypatch):
+    """Isolate the process-wide server list and config scopes per test.
 
-    These tests call ``build_agent()`` directly (never ``get_agent()``), so they
-    never touch the manager-agent singleton — important, because other test
-    modules bind ``manager_agent`` at import and resetting the singleton here
-    would make their ``.override()`` calls miss.
+    - Resets the process-wide server list. These tests call ``build_agent()``
+      directly (never ``get_agent()``), so they never touch the manager-agent
+      singleton — important, because other test modules bind ``manager_agent``
+      at import and resetting it here would make their ``.override()`` calls miss.
+    - Points ``XDG_CONFIG_HOME`` at an empty dir so the user-scope config never
+      leaks in from the developer's real ``~/.config`` (tests opt in explicitly).
     """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path_factory.mktemp("xdg")))
     reset_mcp_servers()
     yield
     reset_mcp_servers()
@@ -105,6 +111,88 @@ def test_load_mcp_servers_expands_env_vars(tmp_path, monkeypatch):
     }}))
     server = load_mcp_servers(tmp_path / ".mcp.json")[0]
     assert server.headers["Authorization"] == "Bearer s3cret"
+
+
+# ---------------------------------------------------------------------------
+# B: user scope + precedence
+# ---------------------------------------------------------------------------
+
+def test_user_scope_merges_with_project_which_wins(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    user_file = user_config_path()
+    user_file.parent.mkdir(parents=True)
+    user_file.write_text(json.dumps({"mcpServers": {
+        "shared": {"command": "user-cmd", "args": []},
+        "useronly": {"command": "u", "args": []},
+    }}))
+    project = tmp_path / ".mcp.json"
+    project.write_text(json.dumps({"mcpServers": {
+        "shared": {"command": "project-cmd", "args": []},
+        "projonly": {"command": "p", "args": []},
+    }}))
+    by_id = {s.id: s for s in load_mcp_servers(project)}
+    assert set(by_id) == {"shared", "useronly", "projonly"}
+    assert by_id["shared"].command == "project-cmd"  # project overrides user
+
+
+def test_user_scope_can_be_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    user_file = user_config_path()
+    user_file.parent.mkdir(parents=True)
+    user_file.write_text(json.dumps({"mcpServers": {"u": {"command": "x", "args": []}}}))
+    assert load_mcp_servers(tmp_path / "none.json", user_scope=False) == []
+
+
+# ---------------------------------------------------------------------------
+# C: opt-in import / discovery from Claude Code + Gemini CLI
+# ---------------------------------------------------------------------------
+
+def test_discover_gemini_normalizes_transports(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    gem = tmp_path / ".gemini"
+    gem.mkdir()
+    (gem / "settings.json").write_text(json.dumps({"mcpServers": {
+        "local": {"command": "godoctor", "args": ["-x"]},
+        "httpsrv": {"httpUrl": "http://localhost:3000/mcp", "headers": {"A": "b"}},
+        "ssesrv": {"url": "http://localhost:4000/sse"},
+    }}))
+    by_id = {s.id: s for s in load_mcp_servers(tmp_path / "none.json", discover=["gemini"])}
+    assert isinstance(by_id["local"], MCPServerStdio)
+    assert isinstance(by_id["httpsrv"], MCPServerStreamableHTTP)  # httpUrl -> streamable
+    assert isinstance(by_id["ssesrv"], MCPServerSSE)              # gemini url -> SSE
+
+
+def test_discover_claude_includes_user_and_project_sections(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".claude.json").write_text(json.dumps({
+        "mcpServers": {"usersrv": {"command": "u", "args": []}},
+        "projects": {str(Path.cwd()): {"mcpServers": {
+            "projsrv": {"type": "http", "url": "https://example.com/mcp"}}}},
+    }))
+    by_id = {s.id: s for s in load_mcp_servers(tmp_path / "none.json", discover=["claude"])}
+    assert isinstance(by_id["usersrv"], MCPServerStdio)
+    assert isinstance(by_id["projsrv"], MCPServerStreamableHTTP)
+
+
+def test_external_entries_unknown_source_raises():
+    with pytest.raises(ValueError):
+        external_entries("cursor")
+
+
+def test_import_to_user_config_writes_then_skips(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    (tmp_path / ".claude.json").write_text(json.dumps({"mcpServers": {
+        "a": {"command": "x", "args": []},
+        "b": {"command": "y", "args": []},
+    }}))
+    added, skipped = import_to_user_config("claude")
+    assert set(added) == {"a", "b"} and skipped == []
+    data = json.loads(user_config_path().read_text())
+    assert set(data["mcpServers"]) == {"a", "b"}
+    # Re-importing keeps existing entries instead of clobbering them.
+    added2, skipped2 = import_to_user_config("claude")
+    assert added2 == [] and set(skipped2) == {"a", "b"}
 
 
 # ---------------------------------------------------------------------------

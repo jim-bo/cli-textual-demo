@@ -73,6 +73,7 @@ class ChatApp(App):
         system_prompt_append: Optional[str] = None,
         mcp_servers: Optional[list] = None,
         mcp_config: Optional[Path] = None,
+        mcp_discover: Optional[List[str]] = None,
         **kwargs,
     ):
         # Apply library overrides BEFORE the manager agent is first built.
@@ -93,7 +94,7 @@ class ChatApp(App):
         # Load MCP servers (from .mcp.json and/or the programmatic list) so the
         # agent picks them up as toolsets when it is (re)built below.
         from cli_textual.agents.mcp import load_mcp_servers, set_mcp_servers
-        set_mcp_servers(load_mcp_servers(mcp_config, extra=mcp_servers))
+        set_mcp_servers(load_mcp_servers(mcp_config, extra=mcp_servers, discover=mcp_discover))
         if (
             model is not None
             or safe_mode is not None
@@ -102,6 +103,7 @@ class ChatApp(App):
             or system_prompt_append is not None
             or mcp_servers
             or mcp_config is not None
+            or mcp_discover
         ):
             from cli_textual.agents.manager import _reset_agent
             _reset_agent()

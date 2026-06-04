@@ -128,41 +128,161 @@ def _server_from_entry(name: str, entry: dict[str, Any]) -> MCPServer:
     )
 
 
+def user_config_path() -> Path:
+    """cli-textual's own user-scope config: ``$XDG_CONFIG_HOME/cli-textual/mcp.json``
+    (falling back to ``~/.config/cli-textual/mcp.json``)."""
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return Path(base) / "cli-textual" / "mcp.json"
+
+
+def _read_entries(path: Path | None) -> dict[str, dict]:
+    """Return the ``mcpServers`` map from a config file, or ``{}`` if missing
+    or malformed (a typo must never crash startup)."""
+    if path is None or not Path(path).exists():
+        return {}
+    try:
+        data = json.loads(Path(path).read_text())
+        return dict(data.get("mcpServers") or {})
+    except (json.JSONDecodeError, OSError, AttributeError, TypeError) as exc:
+        logger.warning("MCP: could not read %s: %s", path, exc)
+        return {}
+
+
+# --- Opt-in import from other tools' configs (Claude Code, Gemini CLI) --------
+# These tools' user/global configs are NOT read by default — only when the user
+# asks (the ``discover=`` arg / ``ChatApp(mcp_discover=...)`` / ``/mcp import``),
+# because silently inheriting another tool's servers is surprising and would
+# undercut SAFE_MODE.
+
+def _claude_config_paths() -> list[Path]:
+    return [Path(os.path.expanduser("~/.claude.json"))]
+
+
+def _gemini_config_paths() -> list[Path]:
+    # Ordered low→high precedence: user, then project (project overrides user).
+    return [
+        Path(os.path.expanduser("~/.gemini/settings.json")),
+        Path.cwd() / ".gemini" / "settings.json",
+    ]
+
+
+def _normalize_claude(entry: dict) -> dict:
+    """Claude's ``.mcp.json``/``~/.claude.json`` entries already use our schema
+    (``command``/``args``/``env``/``cwd`` or ``type``/``url``/``headers``)."""
+    keys = ("command", "args", "env", "cwd", "url", "headers", "type")
+    return {k: entry[k] for k in keys if k in entry}
+
+
+def _normalize_gemini(entry: dict) -> dict:
+    """Map a Gemini ``mcpServers`` entry onto our schema. Gemini uses ``httpUrl``
+    for Streamable HTTP and ``url`` for SSE (the opposite-ish of ours)."""
+    if "command" in entry:
+        return {k: entry[k] for k in ("command", "args", "env", "cwd") if k in entry}
+    if "httpUrl" in entry:
+        out = {"url": entry["httpUrl"]}
+        if "headers" in entry:
+            out["headers"] = entry["headers"]
+        return out
+    if "url" in entry:  # Gemini's plain `url` is the SSE transport
+        out = {"url": entry["url"], "type": "sse"}
+        if "headers" in entry:
+            out["headers"] = entry["headers"]
+        return out
+    return dict(entry)  # let the builder reject it
+
+
+def external_entries(source: str) -> dict[str, dict]:
+    """Read + normalize another tool's MCP server definitions to our schema.
+
+    ``source`` is ``"claude"`` or ``"gemini"``. Returns ``{name: entry}``;
+    missing files yield ``{}``. Raises ``ValueError`` for an unknown source.
+    """
+    merged: dict[str, dict] = {}
+    if source == "claude":
+        for path in _claude_config_paths():
+            if not path.exists():
+                continue
+            try:
+                data = json.loads(path.read_text())
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning("MCP: could not read %s: %s", path, exc)
+                continue
+            for name, entry in (data.get("mcpServers") or {}).items():
+                merged[name] = _normalize_claude(entry)
+            # Claude stores local-scope servers per project under projects[<cwd>].
+            project = (data.get("projects") or {}).get(str(Path.cwd()), {})
+            for name, entry in (project.get("mcpServers") or {}).items():
+                merged[name] = _normalize_claude(entry)
+        return merged
+    if source == "gemini":
+        for path in _gemini_config_paths():  # low→high precedence
+            for name, entry in _read_entries(path).items():
+                merged[name] = _normalize_gemini(entry)
+        return merged
+    raise ValueError(f"unknown MCP import source {source!r} (expected 'claude' or 'gemini')")
+
+
 def load_mcp_servers(
     config_path: Path | None = None,
     extra: list[MCPServer] | None = None,
+    user_scope: bool = True,
+    discover: list[str] | None = None,
 ) -> list[MCPServer]:
-    """Load MCP servers from a ``.mcp.json`` file and/or a programmatic list.
+    """Load MCP servers from all configured scopes, by precedence.
 
-    Args:
-        config_path: Path to the JSON config. When ``None``, looks for
-            ``.mcp.json`` in the current working directory. A missing file is
-            not an error (returns only ``extra``).
-        extra: Pre-constructed ``MCPServer`` objects to append (the
-            ``ChatApp(mcp_servers=...)`` path).
+    Sources are merged by server name, lowest → highest precedence:
 
-    Returns:
-        The combined list of servers. A malformed file or a bad individual
-        entry is logged and skipped rather than raised, so a typo in config
-        can never crash startup.
+    1. ``discover`` — opt-in import from other tools (``["claude", "gemini"]``).
+    2. user scope — cli-textual's own :func:`user_config_path`.
+    3. project scope — ``config_path`` or ``./.mcp.json``.
+    4. ``extra`` — pre-constructed servers (the ``ChatApp(mcp_servers=...)`` path).
+
+    A later source overrides an earlier one with the same name, so local/explicit
+    config always wins over inherited config. Malformed files and bad individual
+    entries are logged and skipped, never raised.
     """
-    servers: list[MCPServer] = []
-    path = config_path or (Path.cwd() / DEFAULT_CONFIG_FILENAME)
-    if path.exists():
+    entries: dict[str, dict] = {}
+    for source in discover or []:
         try:
-            data = json.loads(path.read_text())
-            entries = data.get("mcpServers", {})
-        except (json.JSONDecodeError, OSError, AttributeError) as exc:
-            logger.warning("MCP: could not read %s: %s", path, exc)
-            entries = {}
-        for name, entry in entries.items():
-            try:
-                servers.append(_server_from_entry(name, entry))
-            except Exception as exc:  # noqa: BLE001 — skip the bad entry, keep the rest
-                logger.warning("MCP: skipping server %r: %s", name, exc)
-    if extra:
-        servers.extend(extra)
-    return servers
+            entries.update(external_entries(source))
+        except ValueError as exc:
+            logger.warning("MCP: %s", exc)
+    if user_scope:
+        entries.update(_read_entries(user_config_path()))
+    entries.update(_read_entries(config_path or (Path.cwd() / DEFAULT_CONFIG_FILENAME)))
+
+    servers: dict[str, MCPServer] = {}
+    for name, entry in entries.items():
+        try:
+            servers[name] = _server_from_entry(name, entry)
+        except Exception as exc:  # noqa: BLE001 — skip the bad entry, keep the rest
+            logger.warning("MCP: skipping server %r: %s", name, exc)
+    for server in extra or []:
+        servers[getattr(server, "id", None) or f"_extra{len(servers)}"] = server
+    return list(servers.values())
+
+
+def import_to_user_config(source: str) -> tuple[list[str], list[str]]:
+    """Import another tool's servers into cli-textual's user-scope config file.
+
+    Reads + normalizes ``source`` ("claude"/"gemini") and merges new entries
+    into :func:`user_config_path` (existing entries of the same name are kept,
+    not overwritten). Returns ``(added_names, skipped_existing_names)``. The
+    caller should restart so the new servers connect.
+    """
+    incoming = external_entries(source)
+    path = user_config_path()
+    existing = _read_entries(path)
+    added, skipped = [], []
+    for name, entry in incoming.items():
+        if name in existing:
+            skipped.append(name)
+        else:
+            existing[name] = entry
+            added.append(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"mcpServers": existing}, indent=2))
+    return added, skipped
 
 
 def set_mcp_servers(servers: list[MCPServer]) -> None:
