@@ -29,6 +29,8 @@ from cli_textual.core.chat_events import (
 from cli_textual.agents.manager import run_manager_pipeline
 from cli_textual.agents.observability import init_observability, is_tracing_enabled
 from cli_textual.core.conversation_log import ConversationLogger, default_log_path
+from cli_textual.core.formatting import format_args_block, format_args_inline
+from cli_textual.agents.pricing import context_left_pct, estimate_cost, token_counts
 
 # UI Component Imports
 from cli_textual.ui.widgets.growing_text_area import GrowingTextArea
@@ -119,6 +121,12 @@ class ChatApp(App):
         self.interactive_input_queue = asyncio.Queue()
         self.verbose_mode = False
         self._agent_waiting_for_input = False
+        # Handle to the in-flight stream worker, so Esc can interrupt it.
+        self._agent_worker = None
+        # Session-cumulative usage for the status bar.
+        self._session_tokens_in = 0
+        self._session_tokens_out = 0
+        self._session_cost = 0.0
 
         # Optional append-only JSONL conversation log for debugging.
         self.conversation_log: Optional[ConversationLogger] = None
@@ -163,6 +171,9 @@ class ChatApp(App):
                 from cli_textual.agents.model import get_model
                 model_name = getattr(get_model(), "model_name", "test-mock")
                 yield Label(f"model: {model_name}", classes="status-info model-info")
+                yield Label("tok —", classes="status-info tokens-info")
+                yield Label("$0.0000", classes="status-info cost-info")
+                yield Label("ctx —", classes="status-info context-info")
                 trace_label = "[green]● langfuse[/]" if is_tracing_enabled() else "[dim]○ langfuse[/]"
                 yield Label(trace_label, classes="status-info")
             yield Label(str(self.workspace_root), classes="path-info")
@@ -265,6 +276,22 @@ class ChatApp(App):
     @on(GrowingTextArea.Submitted)
     async def handle_submission(self, event: GrowingTextArea.Submitted) -> None:
         user_input = event.text
+        # Refuse a new agent turn while one is still streaming, so we never
+        # orphan a running worker (which would keep emitting output/cost and
+        # leave Esc only able to cancel the newest stream). Commands are still
+        # allowed. The input cleared itself on submit, so restore the text to
+        # let the user resubmit after interrupting with Esc.
+        if (
+            not user_input.startswith("/")
+            and self._agent_worker is not None
+            and self._agent_worker.is_running
+        ):
+            self.notify("A response is still streaming — press Esc to interrupt it first.")
+            main_input = self.query_one("#main-input", GrowingTextArea)
+            main_input.text = user_input
+            main_input.move_cursor((0, len(user_input)))
+            main_input.focus()
+            return
         self.add_to_history(user_input, is_user=True)
         if self.conversation_log is not None:
             if user_input.startswith("/"):
@@ -276,7 +303,7 @@ class ChatApp(App):
             await self.process_command(user_input)
         else:
             generator = run_manager_pipeline(user_input, self.interactive_input_queue, message_history=self.message_history, session_id=self.session_id)
-            self.run_worker(self.stream_agent_response(generator))
+            self._agent_worker = self.run_worker(self.stream_agent_response(generator))
         self.query_one("#main-input").focus()
 
     async def stream_agent_response(self, generator: AsyncGenerator[ChatEvent, None]):
@@ -301,98 +328,174 @@ class ChatApp(App):
         thinking_collapsible = None
         thinking_widget = None
         thinking_text = ""
+        # Tool lifecycle is sequential (Start → Output → End) in this stream, so
+        # we can stash a tool's args at Start and pop them when its output row is
+        # built. Keyed by name to tolerate back-to-back calls to the same tool.
+        pending_tool_args: dict[str, dict] = {}
 
-        async for event in generator:
-            if self.conversation_log is not None:
-                self.conversation_log.log_event(event)
-            if isinstance(event, AgentThinkingChunk):
-                if not thinking_collapsible:
-                    thinking_collapsible = Collapsible(
-                        Static("", classes="thinking-content"),
-                        title="Reasoning",
-                        collapsed=not self.verbose_mode,
-                        classes="thinking-block",
+        try:
+            async for event in generator:
+                if self.conversation_log is not None:
+                    self.conversation_log.log_event(event)
+                if isinstance(event, AgentThinkingChunk):
+                    if not thinking_collapsible:
+                        thinking_collapsible = Collapsible(
+                            Static("", classes="thinking-content"),
+                            title="Reasoning",
+                            collapsed=not self.verbose_mode,
+                            classes="thinking-block",
+                        )
+                        await history.mount(thinking_collapsible)
+                        thinking_widget = thinking_collapsible.query_one(".thinking-content")
+                    thinking_text += event.text
+                    thinking_widget.update(thinking_text)
+                    history.scroll_end(animate=False)
+
+                elif isinstance(event, AgentThinkingComplete):
+                    if thinking_widget:
+                        thinking_widget.update(event.full_text)
+
+                elif isinstance(event, AgentThinking):
+                    task_label.update(event.message)
+
+                elif isinstance(event, AgentRequiresUserInput):
+                    # Pause and show the interaction UI
+                    self._agent_waiting_for_input = True
+                    interaction = self.query_one("#interaction-container")
+                    interaction.add_class("visible")
+                    interaction.query("*").remove()
+
+                    interaction.mount(Label(event.prompt))
+
+                    if event.tool_name == "/select":
+                        options = OptionList(*event.options, id="agent-select-tool")
+                        interaction.mount(options)
+                        self.call_after_refresh(options.focus)
+
+                    history.scroll_end(animate=False)
+
+                elif isinstance(event, AgentExecuteCommand):
+                    # Proactively execute a TUI command
+                    full_cmd = event.command_name
+                    if event.args:
+                        full_cmd += " " + " ".join(event.args)
+                    await self.process_command(full_cmd)
+
+                elif isinstance(event, AgentToolStart):
+                    pending_tool_args[event.tool_name] = event.args
+                    inline = format_args_inline(event.args)
+                    task_label.update(
+                        f"Running tool: [bold cyan]{event.tool_name}[/]({inline})"
                     )
-                    await history.mount(thinking_collapsible)
-                    thinking_widget = thinking_collapsible.query_one(".thinking-content")
-                thinking_text += event.text
-                thinking_widget.update(thinking_text)
-                history.scroll_end(animate=False)
 
-            elif isinstance(event, AgentThinkingComplete):
-                if thinking_widget:
-                    thinking_widget.update(event.full_text)
+                elif isinstance(event, AgentToolOutput):
+                    # Render tool output as Markdown inside a collapsed-by-default
+                    # Collapsible so the chat stays scannable. Tool results are
+                    # often long (tables, file contents, JSON) and the user can
+                    # expand them on demand. Errors stay expanded so failures are
+                    # visible without a click. The title carries an opencode-style
+                    # ``name(args)`` summary; the full args JSON sits above the
+                    # output in the expanded body.
+                    style_class = "tool-output-error" if event.is_error else "tool-output"
+                    status = "error" if event.is_error else "ok"
+                    args = pending_tool_args.pop(event.tool_name, None)
+                    inline = format_args_inline(args or {})
+                    title = f"{event.tool_name}({inline}) ▸ {status}"
+                    body: list = []
+                    args_block = format_args_block(args)
+                    if args_block:
+                        body.append(Static(args_block, classes="tool-args"))
+                    body.append(Markdown(event.content or "", classes=style_class))
+                    coll = Collapsible(
+                        *body,
+                        title=title,
+                        collapsed=not event.is_error,
+                        classes="tool-output-block",
+                    )
+                    await history.mount(coll)
+                    history.scroll_end(animate=False)
 
-            elif isinstance(event, AgentThinking):
-                task_label.update(event.message)
-            
-            elif isinstance(event, AgentRequiresUserInput):
-                # Pause and show the interaction UI
-                self._agent_waiting_for_input = True
-                interaction = self.query_one("#interaction-container")
-                interaction.add_class("visible")
-                interaction.query("*").remove()
+                elif isinstance(event, AgentToolEnd):
+                    task_label.update(f"Tool complete: [bold green]{event.tool_name}[/]")
 
-                interaction.mount(Label(event.prompt))
+                elif isinstance(event, AgentStreamChunk):
+                    # If we're starting to stream, remove the spinner and create the Markdown widget
+                    if not markdown_widget:
+                        await progress.remove()
+                        markdown_widget = Markdown("", classes="ai-msg")
+                        await history.mount(markdown_widget)
 
-                if event.tool_name == "/select":
-                    options = OptionList(*event.options, id="agent-select-tool")
-                    interaction.mount(options)
-                    self.call_after_refresh(options.focus)
+                    full_text += event.text
+                    await markdown_widget.update(full_text)
+                    history.scroll_end(animate=False)
 
-                history.scroll_end(animate=False)
+                elif isinstance(event, AgentComplete):
+                    # Save new history for context memory
+                    if event.new_history:
+                        self.message_history.extend(event.new_history)
 
-            elif isinstance(event, AgentExecuteCommand):
-                # Proactively execute a TUI command
-                full_cmd = event.command_name
-                if event.args:
-                    full_cmd += " " + " ".join(event.args)
-                await self.process_command(full_cmd)
+                    # Surface token/cost/context usage in the status bar.
+                    if event.usage is not None:
+                        self._update_usage_status(event.usage)
 
-            elif isinstance(event, AgentToolStart):
-                task_label.update(f"Running tool: [bold cyan]{event.tool_name}[/]")
+                    # If we never got a stream (e.g. only tool calls), remove progress
+                    if "agent-progress" in [c.id for c in history.children]:
+                        await progress.remove()
+                    history.scroll_end(animate=False)
+        except asyncio.CancelledError:
+            # Esc-to-interrupt. Close the generator first — that raises
+            # GeneratorExit into run_pipeline, whose finally cancels the inner
+            # model task so it stops streaming (and billing). Then finalize the
+            # partial message with a "Stopped" affordance. The cancellation is
+            # swallowed (not re-raised) so the worker ends cleanly; the partial
+            # turn is shown but intentionally not saved to message_history.
+            await generator.aclose()
+            if "agent-progress" in [c.id for c in history.children]:
+                await progress.remove()
+            if markdown_widget is not None:
+                await markdown_widget.update(full_text + "\n\n_⊘ Stopped_")
+            else:
+                await history.mount(Static("⊘ Stopped", classes="stopped-msg"))
+            history.scroll_end(animate=False)
 
-            elif isinstance(event, AgentToolOutput):
-                # Render tool output as Markdown inside a collapsed-by-default
-                # Collapsible so the chat stays scannable. Tool results are
-                # often long (tables, file contents, JSON) and the user can
-                # expand them on demand. Errors stay expanded so failures are
-                # visible without a click.
-                style_class = "tool-output-error" if event.is_error else "tool-output"
-                status = "error" if event.is_error else "ok"
-                title = f"{event.tool_name} ▸ {status}"
-                coll = Collapsible(
-                    Markdown(event.content or "", classes=style_class),
-                    title=title,
-                    collapsed=not event.is_error,
-                    classes="tool-output-block",
-                )
-                await history.mount(coll)
-                history.scroll_end(animate=False)
+    @staticmethod
+    def _fmt_tokens(n: int) -> str:
+        """Compact human token count: 1234 → '1.2k', 980 → '980'."""
+        if n >= 1000:
+            return f"{n / 1000:.1f}k"
+        return str(n)
 
-            elif isinstance(event, AgentToolEnd):
-                task_label.update(f"Tool complete: [bold green]{event.tool_name}[/]")
-            
-            elif isinstance(event, AgentStreamChunk):
-                # If we're starting to stream, remove the spinner and create the Markdown widget
-                if not markdown_widget:
-                    await progress.remove()
-                    markdown_widget = Markdown("", classes="ai-msg")
-                    await history.mount(markdown_widget)
+    def _update_usage_status(self, usage) -> None:
+        """Refresh the token / cost / context labels in the status bar.
 
-                full_text += event.text
-                await markdown_widget.update(full_text)
-                history.scroll_end(animate=False)
+        ``usage`` is a pydantic-ai run usage object. Session totals accumulate
+        across turns; context-left uses this run's input-token count as a proxy
+        for the current context size (the latest request carries the full
+        prompt+history). Note: input_tokens is summed across requests within a
+        multi-step tool loop, so the context gauge can over-count on tool-heavy
+        turns — it errs toward warning earlier, which is the safe direction.
+        """
+        from cli_textual.agents.model import get_model
 
-            elif isinstance(event, AgentComplete):
-                # Save new history for context memory
-                if event.new_history:
-                    self.message_history.extend(event.new_history)
+        model_name = getattr(get_model(), "model_name", "test-mock")
+        inp, out = token_counts(usage)
+        self._session_tokens_in += inp
+        self._session_tokens_out += out
+        self._session_cost += estimate_cost(model_name, usage)
 
-                # If we never got a stream (e.g. only tool calls), remove progress
-                if "agent-progress" in [c.id for c in history.children]:
-                    await progress.remove()
-                history.scroll_end(animate=False)
+        pct = context_left_pct(model_name, inp)
+        try:
+            self.query_one(".tokens-info", Label).update(
+                f"tok {self._fmt_tokens(self._session_tokens_in)}↑ "
+                f"{self._fmt_tokens(self._session_tokens_out)}↓"
+            )
+            self.query_one(".cost-info", Label).update(f"${self._session_cost:.4f}")
+            ctx_label = self.query_one(".context-info", Label)
+            ctx_label.update(f"ctx {pct:.0f}%")
+            ctx_label.set_class(pct < 15, "low-context")
+        except Exception:
+            # Status bar not mounted (e.g. headless contexts) — usage is best-effort.
+            pass
 
     async def process_command(self, cmd_str: str):
         parts = cmd_str.split()
@@ -460,6 +563,11 @@ class ChatApp(App):
             return
         if "visible" in self.query_one("#interaction-container").classes:
             self.cancel_interaction()
+        elif self._agent_worker is not None and self._agent_worker.is_running:
+            # Esc interrupts a running response. Cancelling the consumer worker
+            # raises CancelledError inside stream_agent_response, which closes the
+            # generator (tearing down the inner model task) and renders "Stopped".
+            self._agent_worker.cancel()
 
     def cancel_interaction(self):
         container = self.query_one("#interaction-container")

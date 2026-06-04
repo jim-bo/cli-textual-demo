@@ -2,8 +2,9 @@
 
 ## Files
 
-- `manager.py` — `manager_agent` (pydantic-ai Agent) + `@tool` wrappers + `run_manager_pipeline()` async generator
+- `manager.py` — `manager_agent` (pydantic-ai Agent) + `@tool` wrappers + `run_manager_pipeline()` async generator. `run_pipeline` runs the model loop as an inner task and yields events until `AgentComplete`; its `try/finally` cancels that inner task if the consumer stops early (Esc-to-interrupt) so the model run never orphans.
 - `model.py` — model selection via `PYDANTIC_AI_MODEL` and `OPENROUTER_API_KEY` env vars
+- `pricing.py` — shared model price table (`PRICES`) + context windows (`MODEL_CONTEXT`) and helpers `estimate_cost`, `context_left_pct`, `token_counts`. Single source of truth for cost math, used by the TUI status bar and `bench/mcp/run_mcp_smoke.py`.
 - `mcp.py` — MCP (Model Context Protocol) client. `build_agent` attaches servers as pydantic-ai `toolsets`; each server's `process_tool_call=_emit_events` hook emits the standard `AgentToolStart/Output/End` lifecycle so MCP tools render like built-ins. `get/set/reset_mcp_servers()` mirror `tools/registry.py`. Withheld in SAFE_MODE. `load_mcp_servers` merges scopes by precedence (low→high: opt-in `discover` import from Claude/Gemini < user `~/.config/cli-textual/mcp.json` < project `./.mcp.json` < programmatic `extra`), with `$VAR` expansion. `external_entries`/`import_to_user_config` back the `/mcp import claude|gemini` command (Gemini's `httpUrl`/`url` normalized to our schema).
 - `observability.py` — optional Langfuse tracing. Activates when `LANGFUSE_SECRET_KEY` + `LANGFUSE_PUBLIC_KEY` env vars are set. Calls `Agent.instrument_all()` for automatic OTel tracing.
 - `prompts.yaml` — externalized system prompts loaded by `prompt_loader.py`
