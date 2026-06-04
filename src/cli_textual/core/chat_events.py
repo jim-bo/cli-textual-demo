@@ -69,4 +69,5 @@ class AgentStreamChunk(ChatEvent):
 class AgentComplete(ChatEvent):
     """The agent has finished the entire request loop."""
     new_history: List[Any] = None # List[ModelMessage]
+    usage: Any = None # pydantic_ai run usage (input/output tokens), if available
 

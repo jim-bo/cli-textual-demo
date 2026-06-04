@@ -32,14 +32,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from cli_textual.agents.manager import build_agent  # noqa: E402
 from cli_textual.agents.mcp import _emit_events, set_mcp_servers  # noqa: E402
+from cli_textual.agents.pricing import estimate_cost  # noqa: E402
 
 SERVER = Path(__file__).with_name("server.py")
 
-# Per-1M-token (input, output) USD prices for cost estimation. Extend as needed.
-PRICES = {
-    "qwen/qwen3-coder": (0.22, 1.80),
-    "anthropic/claude-sonnet-4.6": (3.0, 15.0),
-}
+# Price table + cost math now live in cli_textual.agents.pricing, shared with the
+# TUI status bar (see estimate_cost import above).
 
 
 @dataclass
@@ -59,13 +57,6 @@ TASKS = [
     Task("There is a tool that returns a secret word. Call it and tell me the word.",
          "secret_word", "marmoset"),
 ]
-
-
-def _cost(model: str, usage) -> float:
-    inp = getattr(usage, "input_tokens", None) or getattr(usage, "request_tokens", 0) or 0
-    out = getattr(usage, "output_tokens", None) or getattr(usage, "response_tokens", 0) or 0
-    pin, pout = PRICES.get(model, (0.0, 0.0))
-    return (inp * pin + out * pout) / 1_000_000
 
 
 def _tools_called(messages) -> list[str]:
@@ -101,7 +92,7 @@ async def main() -> int:
                 result = await agent.run(t.prompt, deps=None)
                 answer = result.output or ""
                 called = _tools_called(result.all_messages())
-                task_cost = _cost(model, result.usage())
+                task_cost = estimate_cost(model, result.usage())
             except Exception as exc:  # noqa: BLE001
                 answer, called = f"<error: {exc}>", []
             dur = time.monotonic() - start

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import inspect
 import os
 from pathlib import Path
@@ -547,7 +548,8 @@ async def run_pipeline(
                 await event_queue.put(AgentThinkingComplete(full_text=full_thinking))
 
             new_history = final_result.new_messages() if final_result else None
-            await event_queue.put(AgentComplete(new_history=new_history))
+            usage = final_result.usage() if final_result else None
+            await event_queue.put(AgentComplete(new_history=new_history, usage=usage))
         except Exception as e:
             await event_queue.put(AgentStreamChunk(text=f"\n\n**Error:** {e}"))
             await event_queue.put(AgentComplete())
@@ -555,12 +557,31 @@ async def run_pipeline(
     # Run the agent in the background
     task = asyncio.create_task(run_agent())
 
-    # Yield events to the consumer as they come in
-    while True:
-        event = await event_queue.get()
-        yield event
-        if isinstance(event, AgentComplete):
-            break
+    # Yield events to the consumer as they come in. The try/finally guarantees
+    # the inner model task is torn down when the consumer stops iterating —
+    # whether normally (AgentComplete) or because the consumer was cancelled
+    # (Esc-to-interrupt). On consumer cancellation Python calls the generator's
+    # ``aclose()``, raising GeneratorExit at the ``yield`` and unwinding here,
+    # so the model stream never orphans (and keeps billing) in the background.
+    try:
+        while True:
+            event = await event_queue.get()
+            yield event
+            if isinstance(event, AgentComplete):
+                break
+        # Normal completion: let run_agent unwind cleanly. At the moment
+        # AgentComplete is yielded the task has done its work but isn't yet
+        # marked done, so awaiting (rather than cancelling) avoids tearing down
+        # the shared agent's streaming context mid-exit.
+        await task
+    finally:
+        # Abnormal exit (consumer cancelled → aclose() raises GeneratorExit at
+        # the yield, or an exception): cancel the still-running model task so it
+        # doesn't orphan and keep billing.
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
 
 # ---------------------------------------------------------------------------

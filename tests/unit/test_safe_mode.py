@@ -107,6 +107,14 @@ def _reload_manager():
     """Reload manager module before and after the test for clean state."""
     import cli_textual.agents.manager as mgr
     original = os.environ.get("SAFE_MODE")
+    # The manager agent is a lazy singleton (``_agent_instance``). Reloading the
+    # module resets it to None, so the next ``get_agent()`` builds a *fresh*
+    # agent — but other test modules captured ``manager_agent`` at collection and
+    # call ``.override()`` on that original instance. If we leave a fresh agent
+    # cached, their overrides target a stale object and silently no-op (the run
+    # uses the real model and renders nothing). Snapshot the live singleton and
+    # restore it on teardown so the shared instance stays stable across tests.
+    original_instance = mgr.get_agent()
     yield mgr
     # Restore original state
     if original is None:
@@ -114,6 +122,7 @@ def _reload_manager():
     else:
         os.environ["SAFE_MODE"] = original
     importlib.reload(mgr)
+    mgr._agent_instance = original_instance
 
 
 def test_safe_mode_excludes_filesystem_mutating_tools(monkeypatch, _reload_manager):
