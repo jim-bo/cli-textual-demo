@@ -4,6 +4,7 @@
 
 - `manager.py` — `manager_agent` (pydantic-ai Agent) + `@tool` wrappers + `run_manager_pipeline()` async generator
 - `model.py` — model selection via `PYDANTIC_AI_MODEL` and `OPENROUTER_API_KEY` env vars
+- `mcp.py` — MCP (Model Context Protocol) client. Loads servers from `.mcp.json` (`{"mcpServers": {...}}`, `$VAR` expansion) and/or `ChatApp(mcp_servers=[...])`; `build_agent` attaches them as pydantic-ai `toolsets`. Each server's `process_tool_call=_emit_events` hook emits the standard `AgentToolStart/Output/End` lifecycle so MCP tools render like built-ins. `get/set/reset_mcp_servers()` mirror `tools/registry.py`. Withheld in SAFE_MODE.
 - `observability.py` — optional Langfuse tracing. Activates when `LANGFUSE_SECRET_KEY` + `LANGFUSE_PUBLIC_KEY` env vars are set. Calls `Agent.instrument_all()` for automatic OTel tracing.
 - `prompts.yaml` — externalized system prompts loaded by `prompt_loader.py`
 
